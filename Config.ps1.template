@@ -1,0 +1,86 @@
+##################################################################################################################
+################################################  CONFIGURATION  #################################################
+##################################################################################################################
+### This file contains all of the configuration options and API keys for the ITG to Datto RMM 
+### integration powershell script.
+##################################################################################################################
+
+####################
+# $IgnoreSerials
+#
+# Default serial numbers to ignore 
+# "123456789*" is also ignored on top of these
+#
+$IgnoreSerials =  @("To be filled by O.E.M.", "System Serial Number", "Default string")
+
+####################
+# $ITG_ConfigStatusID
+#
+# The ID of the configuration status to use for any newly added devices 
+# This will generally be the ID of the Active status.
+#
+$ITG_ConfigStatusID = 1
+
+####################
+# $ITG_ConfigTypeIDs
+#
+# A mapping of RMM device types to ITG type ID's (e.g. the ID's for Workstation, Laptop, etc)
+# You can get these ID's from the Account > Configuration Types page in ITG, look at the URL of the edit button
+# You can use RMM Device Categories OR Types. 
+#
+# Type will be checked first, if Type does not exist in the hashtable it will look for the category.
+# You can add an "Other" type and if neither the type nor category are found, it will fallback to Other.
+# Instead of an ID, you can set a category or type to $false to not sync it.
+#
+# RMM doesn't have a type for Wireless AP's (other than Datto one's). If they are categorized as a Router,
+# they will be remapped to the category "Network Device (Other)" and the type "Wireless AP". 
+# You can use that to match to an ITG config type below.
+#
+$ITG_ConfigTypeIDs = @{
+	"Datto Access Point" = 1 # Wireless
+	"Datto Continuity" = 2 # Backup Device
+	"Datto Power" = 3 # Power Strip
+	"Datto Switch" = 4 # Switch
+	Desktop = 5 # Workstation
+	"ESXi Host" = 6 # Server
+	Laptop = 7 # Laptop
+	"Firewall" = 8 # Firewall
+	"IP Phone" = 9 # Phone System
+	NAS = 10 # NAS
+	"Network Appliance" = 11 # Network Device
+	"Network Device" = 12 # Network Device
+	"Router" = 13 # Router
+	"Switch" = 14 # Switch
+	"Wireless AP" = 15 # Wireless
+	UPS = 16 # UPS
+	Printer = 17 # Printer
+	Server = 18 # Server
+	Other = 19 # Network Device
+}
+
+
+
+##################################################################################################################
+##################################################  API KEYS  ####################################################
+##################################################################################################################
+
+# $ITGAPIKey
+#
+# An ITG Api key, password access not required
+#
+$ITGAPIKey = @{
+	Url = "https://api.itglue.com"
+	Key = ""
+}
+
+# $DattoAPIKey
+#
+# Your Datto RMM API key details
+#
+$DattoAPIKey = @{
+	Url = "https://xxx-api.centrastage.net"
+	Key = ""
+	SecretKey = ""
+	Region = "xxx"
+}
+

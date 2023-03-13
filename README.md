@@ -22,7 +22,7 @@ Once a week, the integration will perform a full audit where it checks each RMM 
 1. Create a Config.ps1 file from the Config.ps1.template. 
 2. Get the ID of the Status you want to use for new configurations from ITG and use this for `$ITG_ConfigStatusID`. (Navigate to Account > Configuration Statuses, Edit the status then get the ID from the URL)
 3. Configure `$ITG_ConfigTypeIDs` for each RMM Device Type filling in device type ID's from ITG. (Navigate to Account > Configuration Types, Edit the type then get the ID from the URL)
-4. Fill in `$ITGAPIKey` with your ITG API details and `$DattoAPIKey` with your Datto RMM API details.
+4. Fill in `$ITGAPIKey` with your ITG API details and `$DattoAPIKey` with your Datto RMM API details. If you use an ITG API key with password access, the integration will also tag existing passwords to newly created configurations.
 5. See the important points above, you may want to make changes to add auto device archiving, prevent manufacturer name cleanup, change the RMM ID field away from `installed-by`, and you may need to remove the safety check that prevents >100 devices being added to ITG.
 6. If you are ok with it cleaning up manufacturer names, you may want to run the `ITG_Manufacturer_and_Model_Cleanup.ps1` script to clean things up initially.
 7. Place the script on a device that is always on and setup a task scheduler to run it. This can be ran quite often. I have ours setup to trigger daily at 12:05 AM, then it repeats every 10 minutes for a duration of 1 day. This way it syncs new devices into ITG every 10 minutes. If you want to do full updates more often, you could add a second scheduler to run the integration with the ForceCheck flag on a regular schedule as well.

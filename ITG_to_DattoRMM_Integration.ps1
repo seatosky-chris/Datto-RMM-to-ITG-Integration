@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Mar 07 2023
+# Last Modified: Mon Mar 13 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -107,6 +107,8 @@ while ($ITGModels.links.next) {
 	$ITGModels.links = $Models_Next.links
 }
 $ITGModels = $ITGModels.data
+
+$ITGPasswords = @{} # We'll grab these later if we need them
 
 # Check when a full check last ran, if > 1 week ago, run a full check (and it is currently the middle of the night [11PM - 5AM])
 $FullCheckLastRun = $false
@@ -658,6 +660,40 @@ function Get-RelatedITGDevices ($RMMDevice) {
 	return $false
 }
 
+# Gets any related ITG passwords by searching the organization for passwords that contain the devices name
+function Get-RelatedITGPasswords ($RMMDevice) {
+	if (!$RMMDevice) {
+		return;
+	}
+	if ($RMMDevice.siteId -notin $MatchedSites.Keys) {
+		return;
+	}
+	
+	$OrgID = ($MatchedSites[$RMMDevice.siteId]).id
+
+	# Get passwords for this organization if we haven't already
+	if (!$ITGPasswords.$OrgID) {
+		$ITGPasswords_ForOrg = Get-ITGluePasswords -page_size 1000 -organization_id $OrgID
+		$i = 1
+		while ($ITGPasswords_ForOrg.links.next) {
+			$i++
+			$Passwords_Next = Get-ITGluePasswords -page_size 1000 -page_number $i -organization_id $OrgID
+			$ITGPasswords_ForOrg.data += $Passwords_Next.data
+			$ITGPasswords_ForOrg.links = $Passwords_Next.links
+		}
+		if ($ITGPasswords_ForOrg -and $ITGPasswords_ForOrg.data) {
+			$ITGPasswords.$OrgID = $ITGPasswords_ForOrg.data
+		}
+	}
+
+	if ($ITGPasswords.$OrgID) {
+		$RelatedPasswords = $ITGPasswords.$OrgID | Where-Object { $_.attributes.name -like "*$($RMMDevice.hostname)*" -or $_.attributes.name -like "*$($RMMDevice.description)*" }
+		return $RelatedPasswords
+	}
+
+	return $false
+}
+
 # This function will add a device into ITG using an RMM Device for the details
 function New-ITGDevice ($RMMDevice)
 {
@@ -783,8 +819,27 @@ function New-ITGDevice ($RMMDevice)
 
 	if ($NewConfig) {
 		$OrgID = ($MatchedSites[$RMMDevice.siteId]).id
-		New-ITGlueConfigurations -organization_id $OrgID -data $NewConfig
+		$NewITGConfig = New-ITGlueConfigurations -organization_id $OrgID -data $NewConfig
 		Write-Host "Added new device to ITG: $($NewConfig.attributes.name)"
+
+		if ($NewITGConfig -and $NewITGConfig.data[0].id) {
+			# Get any related passwords and attach them as related items to the new config
+			$RelatedPasswords = Get-RelatedITGPasswords -RMMDevice $RMMDevice
+
+			$RelatedItemsBody = @()
+			foreach ($Password in $RelatedPasswords) {
+				$RelatedItemsBody += @{
+					type = "related_items"
+					attributes = @{
+						"destination-id" = $Password.id
+						"destination-type" = "Password"
+					}
+				}
+			}
+			if ($RelatedItemsBody -and $RelatedItemsBody.count -gt 0) {
+				New-ITGlueRelatedItems -resource_type configurations -resource_id $NewITGConfig.data[0].id -data $RelatedItemsBody
+			}
+		}
 	}
 }
 

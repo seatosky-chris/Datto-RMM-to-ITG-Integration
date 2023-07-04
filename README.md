@@ -26,3 +26,45 @@ Once a week, the integration will perform a full audit where it checks each RMM 
 5. See the important points above, you may want to make changes to add auto device archiving, prevent manufacturer name cleanup, change the RMM ID field away from `installed-by`, and you may need to remove the safety check that prevents >100 devices being added to ITG.
 6. If you are ok with it cleaning up manufacturer names, you may want to run the `ITG_Manufacturer_and_Model_Cleanup.ps1` script to clean things up initially.
 7. Place the script on a device that is always on and setup a task scheduler to run it. This can be ran quite often. I have ours setup to trigger daily at 12:05 AM, then it repeats every 10 minutes for a duration of 1 day. This way it syncs new devices into ITG every 10 minutes. If you want to do full updates more often, you could add a second scheduler to run the integration with the ForceCheck flag on a regular schedule as well.
+
+# Datto RMM to ITG Monitors Integration
+
+This is a separate set of components/scripts that will update and add ITG documentation for Monitors found in RMM. This integration allows you to keep track of a monitor's location, when when it is moved from 1 device to another. It consists of 2 parts:
+* An RMM that queries all Windows devices for attached monitors and their info, and then updates a UDF with this info.
+* A PowerShell script that daily queries the RMM UDF, parses the monitor information for each device, and updates ITG.
+
+### How it works
+The RMM component should be ran daily. This will query each device for attached monitors and get their info. The info gathered includes:
+* Manufacturer
+* Model
+* Serial Number
+* Display Type (e.g. DP, HDMI, DVI, etc.)
+* Year of Manufacture
+The component will then update a UDF in RMM with this info in JSON format. It will look something like this:
+`{"Mftr":"Dell","Mdl":"DELL U2412M","SN":"YMYH14DK565S","Type":"DVI","ManYr":2013} |Updated: 2023-07-04`
+
+The PowerShell script should also be ran daily, sometime after the RMM Component has run. When the script runs, it will pull all devices from RMM that have the specified UDF populated. It will parse the UDF fields to get the unique info for each monitor from these devices and make a list of all found monitors with unique serial numbers. Note that we have blacklisted certain serial numbers that aren't unique, and you can further configure this in the config.ps1 file. All Acer monitors have also been blacklisted as they don't seem to use unique serial numbers. 
+
+The script then runs through each monitor and attempts to link it to a monitor config in ITG, with matching based on Organization and Serial Number. If no existing monitor is found, it creates a new monitor in ITG. If an existing monitor is found, it updates it if necessary. The following information is added/updated for monitors in ITG:
+* Configuration Status (Active)
+* Manufacturer
+* Model
+* Warranty Expiry (3 years from the year of manufacture)
+* End of Life (creates an EOL asset set to 5 years from the year of manufacture)
+* Serial Number
+* Installed By (RMM Monitor Integration)
+* Monitor name (only for new devices, uses the format: ORGAcronym-DISP-SerialNumber)
+* Connects the related workstation as a related item and in the notes adds the display type connection
+* Notes, includes: Connected devices (ITG and RMM), Manufacture Year, Last Seen (when disconnected from a device)
+* Configuration interfaces (we cannot attach a device here via a script so it just adds the display type as an interface)
+
+The script will then go through any monitors found in ITG that were not found in RMM, these monitors have been disconnected from devices. It will update these to disconnect them from past devices and add a "Last Seen" note to the monitor config in ITG. If this monitor was last seen over 1 month ago, the asset will also be archived.
+
+### Setup
+1. Add the `Attached Monitor Info to UDF` component to RMM. You can find it here: https://github.com/seatosky-chris/RMM-Scripts-and-Components/blob/main/Components/Custom%20RMM%20Components/Attached%20Monitor%20Info%20to%20UDF%20(STS).ps1
+2. Schedule the RMM component to run daily. Choose an empty UDF # to add the monitor data to, you may wish to rename this UDF in RMM as well. Target **All Windows Desktops**. You may also want to set a long expiry time (12 hours or 1 day) in case a device is not online when this job runs.
+3. Create/update the Config.ps1 file from Config.ps1.template. Note that this is the same config file that is used by the regular ITG to Datto RMM integration documented above. See Setup instructions above for configuration of variables, variables only used by this integration are documented below.
+4. Configure `$ITG_MonitorTypeID` with the configuration type ID of the **Monitor** configuration type. This is found in: `Account > Configuration Types`.
+5. Configure `$ITG_EOL_FlexibleAssetTypeID` with the flexible asset ID of the **End of Life** flexible asset type.
+6. Configure `$RMM_MonitorInfo_UDF` with the UDF # that you will your RMM component is updating.
+7. Place the script (`DattoRMM_to_ITG_Monitors_Integration.ps1`) on a device that is always on and setup a task scheduler to run it. This should be ran sometime after the RMM component above has ran, I personally run it 1 hour after the components scheduled time.

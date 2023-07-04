@@ -10,6 +10,7 @@
 #
 # Default serial numbers to ignore 
 # "123456789*" is also ignored on top of these
+# These will be ignored for both Computers and Monitors
 #
 $IgnoreSerials =  @("To be filled by O.E.M.", "System Serial Number", "Default string")
 
@@ -20,6 +21,29 @@ $IgnoreSerials =  @("To be filled by O.E.M.", "System Serial Number", "Default s
 # This will generally be the ID of the Active status.
 #
 $ITG_ConfigStatusID = 1
+
+####################
+# $ITG_MonitorTypeID
+#
+# The ID of the monitor configuration type to use for the monitor import script
+# Simply navigate to Account > Configuration Types and search for Monitor
+#
+$ITG_MonitorTypeID = 3
+
+####################
+# $ITG_EOL_FlexibleAssetTypeID
+#
+# The ID of the End of Life Flexible Asset type
+#
+$ITG_EOL_FlexibleAssetTypeID = 30
+
+####################
+# $RMM_MonitorInfo_UDF
+#
+# The UDF number that the monitor info is stored in
+# This will be set in Datto RMM in the "Attached Monitor Info to UDF" component
+#
+$RMM_MonitorInfo_UDF = 3
 
 ####################
 # $ITG_ConfigTypeIDs

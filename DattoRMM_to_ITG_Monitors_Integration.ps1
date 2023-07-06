@@ -4,7 +4,7 @@
 # Created Date: Tuesday, May 16th 2023, 3:59:48 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Jul 04 2023
+# Last Modified: Thu Jul 06 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -148,7 +148,7 @@ $ITG_Monitors = Get-ITGlueConfigurations -page_size "1000" -filter_configuration
 $i = 1
 while ($ITG_Monitors.links.next) {
 	$i++
-	$Configurations_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_configuration_type_id $ITG_MonitorTypeID
+	$Configurations_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_configuration_type_id $ITG_MonitorTypeID -include configuration_interfaces
 	$ITG_Monitors.data += $Configurations_Next.data
 	$ITG_Monitors.links = $Configurations_Next.links
 }
@@ -177,6 +177,14 @@ if ($ITG_MonitorEOLs -and $ITG_MonitorEOLs.data) {
 	$ITG_MonitorEOLs = $ITG_MonitorEOLs.data
 	$ITG_MonitorEOLs = $ITG_MonitorEOLs | Where-Object { $_.attributes.name -like "*Monitor*" }
 	$ITG_MonitorEOLs = @($ITG_MonitorEOLs)
+}
+
+if (!$ITG_MonitorEOLs) {
+	$continue = TimedPrompt "No EOL assets could be pulled from ITG. Would you like to continue? 'Y' to continue, otherwise the script will exit in 10 seconds." 10
+	if (!$continue -or $continue.character -ne "Y") {
+		exit
+	}
+	Write-Host "No EOL assets were found in ITG, user input indicates that this is a first time run." -ForegroundColor Yellow
 }
 
 $DisplayTypes = $AllMonitors | Select-Object -ExpandProperty DisplayType | Sort-Object -Unique
@@ -658,8 +666,12 @@ function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel =
 	$ITGModel = $ITGManufacturerAndModel.Model
 
 	$Org_EOLAssets = $ITG_MonitorEOLs | Where-Object { $_.attributes.'organization-id' -eq $ITGMonitor.attributes.'organization-id' }
-	$Possible_EOLAssets = $Org_EOLAssets | Where-Object { $_.attributes.traits.'end-of-life' -like "$($EOLDateArr[0])*" -and $_.attributes.traits.'end-of-life' -like "*-$($EOLDateArr[1])-*" }
+	$Possible_EOLAssets = $Org_EOLAssets | Where-Object { $_.attributes.traits.'end-of-life' -like "$($EOLDateArr[0])*" }
 	$Device_EOLAssets = $Possible_EOLAssets | Where-Object { $_.attributes.traits.'configuration-s' -and $_.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $_.attributes.traits.'configuration-s'.values.id }
+
+	if (($Device_EOLAssets | Measure-Object).count -gt 1) {
+		Write-Host "Warning: Mutliple EOL assets found for '$($ITGMonitor.attributes.name)' (See: $($Device_EOLAssets.id -join ", "))" -ForegroundColor Red
+	}
 
 	if ($Device_EOLAssets) {
 		$Possible_EOLAssets = $Device_EOLAssets
@@ -681,7 +693,26 @@ function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel =
 
 		if (($Possible_EOLAssets | Measure-Object).Count -gt 1) {
 			$Possible_EOLAssets_Filtered = $Possible_EOLAssets | Where-Object { 
+				($_.attributes.traits.'manufacturer-model' -like "*$($ITGMonitor.attributes.'manufacturer-name') *" -and $_.attributes.traits.'manufacturer-model' -like "*$($ITGMonitor.attributes.'model-name')") -or
+				($_.attributes.traits.'manufacturer-model' -like "*$($ITGManufacturer.attributes.name) *" -and $_.attributes.traits.'manufacturer-model' -like "*$($ITGModel.attributes.name)")
+			}
+			if (($Possible_EOLAssets_Filtered | Measure-Object).Count -gt 0) {
+				$Possible_EOLAssets = $Possible_EOLAssets_Filtered
+			}
+		}
+
+		if (($Possible_EOLAssets | Measure-Object).Count -gt 1) {
+			$Possible_EOLAssets_Filtered = $Possible_EOLAssets | Where-Object { 
 				$_.attributes.name -like "*$($ITGMonitor.attributes.'manufacturer-name')*" -and $_.attributes.name -like "*$($ITGMonitor.attributes.'model-name')*"
+			}
+			if (($Possible_EOLAssets_Filtered | Measure-Object).Count -gt 0) {
+				$Possible_EOLAssets = $Possible_EOLAssets_Filtered
+			}
+		}
+
+		if (($Possible_EOLAssets | Measure-Object).Count -gt 1) {
+			$Possible_EOLAssets_Filtered = $Possible_EOLAssets | Where-Object { 
+				$_.attributes.name -like "*$($ITGMonitor.attributes.'manufacturer-name') *" -and $_.attributes.name -like "*$($ITGMonitor.attributes.'model-name') *"
 			}
 			if (($Possible_EOLAssets_Filtered | Measure-Object).Count -gt 0) {
 				$Possible_EOLAssets = $Possible_EOLAssets_Filtered
@@ -703,6 +734,61 @@ function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel =
 			}
 			if (($Possible_EOLAssets_Filtered | Measure-Object).Count -gt 0) {
 				$Possible_EOLAssets = $Possible_EOLAssets_Filtered
+			}
+		}
+		
+		if (($Possible_EOLAssets | Measure-Object).Count -gt 1) {
+			$Possible_EOLAssets = $Possible_EOLAssets | Sort-Object { $_.attributes.'updated-at' } -Descending | Select-Object -First 1
+		}
+	}
+
+	$Unneeded_EOLAssets = $Possible_EOLAssets | Where-Object {
+		$_.id -ne $Possible_EOLAssets[0].id -and 
+		(($_.attributes.traits.'manufacturer-model' -like "*$($ITGMonitor.attributes.'manufacturer-name') *" -and $_.attributes.traits.'manufacturer-model' -like "*$($ITGMonitor.attributes.'model-name')") -or
+		($_.attributes.traits.'manufacturer-model' -like "*$($ITGManufacturer.attributes.name) *" -and $_.attributes.traits.'manufacturer-model' -like "*$($ITGModel.attributes.name)"))
+	}
+
+	if (($Unneeded_EOLAssets | Measure-Object).count -gt 0) {
+		Write-Host "Warning: Mutliple Possible EOL assets found for '$($ITGMonitor.attributes.name)' (Unneeded: $($Unneeded_EOLAssets.id -join ", "))" -ForegroundColor Yellow
+	}
+
+	# Clean up any bad EOL assets
+	$AllDevice_EOLAssets = $ITG_MonitorEOLs | Where-Object { $_.attributes.traits.'configuration-s' -and $_.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $_.attributes.traits.'configuration-s'.values.id }
+	$Remove_EOLAssets =  $false
+	if ($Possible_EOLAssets) {
+		$Remove_EOLAssets = $AllDevice_EOLAssets | Where-Object { $_.id -ne $Possible_EOLAssets[0].id }
+	}
+
+	if ($Remove_EOLAssets) {
+		foreach ($Remove_EOLAsset in $Remove_EOLAssets) {
+			if (($Remove_EOLAsset.attributes.traits.'configuration-s'.values.id | Measure-Object).Count -gt 1) {
+				# Just remove this device from the EOL asset
+				$UpdatedConfigurations = @($Remove_EOLAsset.attributes.traits.'configuration-s'.values.id)
+				$UpdatedConfigurations = $UpdatedConfigurations | Where-Object { $_ -ne $ITGMonitor.id }
+				$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
+
+				$UpdatedEOLAsset = 
+				@{
+					type = 'flexible-assets'
+					attributes = @{
+						traits = @{
+							description = $Remove_EOLAsset.attributes.traits.description
+							"end-of-life" = $Remove_EOLAsset.attributes.traits.'end-of-life'
+							"manufacturer-model" = $Remove_EOLAsset.attributes.traits.'manufacturer-model'
+							"configuration-s" = @($UpdatedConfigurations)
+							notes = $Remove_EOLAsset.attributes.traits.notes
+						}
+					}
+				}
+				$null = Set-ITGlueFlexibleAssets -id $Remove_EOLAsset.id -data $UpdatedEOLAsset
+				$Remove_EOLAsset.attributes.traits.'configuration-s' | ForEach-Object {
+					if ($_.values.id -contains $ITGMonitor.id) {
+						$_.values = $_.values | Where-Object { $_.id -ne $ITGMonitor.id }
+					}
+				}
+			} else {
+				# This is the only device in the EOL asset, remove the entire EOL asset
+				Remove-ITGlueFlexibleAssets -id $Remove_EOLAsset.id
 			}
 		}
 	}
@@ -928,6 +1014,10 @@ function Update-ITGMonitor ($ITGMonitor, $MonitorDetails, $ITGManufacturerAndMod
 	$NewNotes = $OldNotes -replace "Connected to devices?: (([\w\d\-]+) \(ID: ([\d]+)\),? ?)+(`n|\r\n|\n|<br>|<br ?\/>)?", ''
 	$NewNotes = $NewNotes -replace "Connected by: ([\w]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
 	$NewNotes = $NewNotes -replace "RMM Device: ([\w\-\d \(\)\:]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
+	$NewNotes = $NewNotes -replace "Manufacturer Year: ([\-\d]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
+	$NewNotes = $NewNotes -replace "Last seen on: ([\-\d]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
+	$NewNotes = $NewNotes -replace "Last seen connected to \(ITG ID\): ([\d]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
+
 	if (($RelatedConfigs | Measure-Object).Count -gt 1) {
 		$AddToNotes = "Connected to devices: "
 		foreach ($Config in $RelatedConfigs) {
@@ -1149,71 +1239,6 @@ function Update-ITGMonitor ($ITGMonitor, $MonitorDetails, $ITGManufacturerAndMod
 			$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
 			$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id}
 		}
-	}
-}
-
-function Update-ITGMonitor_Temp ($ITGMonitor, $MonitorDetails)
-{
-	if (!$ITGMonitor -or !$MonitorDetails) {
-		return;
-	}
-
-	$ITGOrg = $ITGMonitor.attributes.'organization-id'
-
-	# Update notes
-	$OldNotes = $ITGMonitor.attributes.notes
-	if ($OldNotes -like "*Manufacturer Year:*") {
-		$NewNotes = $OldNotes -replace "Manufacturer Year: ([\d]+)(`n|\r\n|\n|<br>|<br ?\/>)?", ''
-		$NewNotes += "`nManufacture Year: $($MonitorDetails.YearOfManufacture)"
-	}
-
-	$AddLoc = $null
-	if ($OldNotes -like "*Manufacturer Year: *") {
-		$AddLoc = $OldNotes.IndexOf("Manufacturer Year:")
-	}
-
-	if ([string]::IsNullOrEmpty($AddLoc)) {
-		$NewNotes = $NewNotes.Trim() + "`n" + $AddToNotes
-	} else {
-		if ($AddLoc -eq 0) {
-			$NewNotes = $AddToNotes + "`n" + $NewNotes.Trim()
-		} else {
-			$NewNotes_Temp = $NewNotes.Substring(0, $AddLoc).Trim() + "`n" + $AddToNotes + "`n"
-			$NewNotes = $NewNotes_Temp + $NewNotes.Substring($AddLoc).Trim()
-		}
-	}
-	$NewNotes = $NewNotes.Trim()
-	
-
-
-	$UpdatedConfig =
-	@{
-		type = 'configurations'
-		attributes = @{
-
-		}
-	}
-
-	if ($NewNotes) {
-		$UpdatedConfig.attributes.notes = $NewNotes
-	}
-
-	$UpdatesCompleted = $false
-
-	if ($UpdatedConfig -and ($UpdatedConfig.attributes -and $UpdatedConfig.attributes.Keys.Count -gt 0)) {
-		$UpdatedConfig.attributes.archived = $false
-		try {
-			$UpdatedITGConfig = Set-ITGlueConfigurations -id $ITGMonitor.id -organization_id $ITGOrg -data $UpdatedConfig
-		} catch {
-			$UpdatedITGConfig = $false
-		}
-		if ($UpdatedITGConfig -and $UpdatedITGConfig.data[0].id) {
-			$UpdatesCompleted = $true
-		}
-	}
-
-	if ($UpdatesCompleted) {
-		Write-Host "Updated monitor in ITG: $($ITGMonitor.attributes.name) (ID: $($ITGMonitor.id))" -ForegroundColor Cyan
 	}
 }
 
@@ -1503,17 +1528,56 @@ foreach ($Monitor in $AllMonitors) {
 
 			$UpdateRequired = $false
 			while ($UpdateRequired -eq $false) {
-				if ($ITG_MatchedMonitor.attributes.'notes' -like "*Manufacturer Year: *") {
+				if ($ITG_MatchedMonitor.attributes.'configuration-status-id' -ne $ITG_ConfigStatusID) {
 					$UpdateRequired = $true
 					break
 				}
+				if ($ITGManufacturerAndModel.Manufacturer -and !$ITG_MatchedMonitor.attributes.'manufacturer-id') {
+					$UpdateRequired = $true
+					break
+				}
+				if ($ITGManufacturerAndModel.Model -and !$ITG_MatchedMonitor.attributes.'model-id') {
+					$UpdateRequired = $true
+					break
+				}
+				if ($WarrantyDate -and !$ITG_MatchedMonitor.attributes.'warranty-expires-at') {
+					$UpdateRequired = $true
+					break
+				}
+				if (!$ITG_MatchedMonitor.attributes.'serial-number' -and $Monitor.SerialNumber) {
+					$UpdateRequired = $true
+					break
+				}
+				if (!$ITG_MatchedMonitor.attributes.'installed-by' -or $ITG_MatchedMonitor.attributes.'installed-by' -notlike "*RMM Monitor Integration*") {
+					$UpdateRequired = $true
+					break
+				}
+				if ($ITG_MatchedMonitor.attributes.notes -notlike "*Manufacture Year: *" -or $ITG_MatchedMonitor.attributes.notes -notlike "*$($Monitor.YearOfManufacture)*") {
+					$UpdateRequired = $true
+					break
+				}
+				if ($ITG_MatchedMonitor.attributes.notes -notlike "*RMM ID: $($Monitor.AttachedDeviceID)*" -or $ITG_MatchedMonitor.attributes.notes -notlike "*RMM Device: $($Monitor.AttachedDevice)*") {
+					$UpdateRequired = $true
+					break
+				}
+				if ($ITG_MatchedMonitor.attributes.notes -notlike "*Connected by: $($Monitor.DisplayType)*") {
+					$UpdateRequired = $true
+					break
+				}
+				if (($ITG_MonitorEOLs | Where-Object { $ITG_MatchedMonitor.id -in $_.attributes.traits.'configuration-s'.values.id } | Measure-Object).count -lt 1) {
+					$UpdateRequired = $true
+					break
+				}
+
 				break;
 			}
 
 			if ($UpdateRequired) {
-				Update-ITGMonitor_Temp -MonitorDetails $Monitor -ITGMonitor $ITG_MatchedMonitor
+				Update-ITGMonitor -MonitorDetails $Monitor -ITGMonitor $ITG_MatchedMonitor -ITGManufacturerAndModel $ITGManufacturerAndModel
 			}
 		}
+	} else {
+		New-ITGMonitor -MonitorDetails $Monitor -ITGManufacturerAndModel $ITGManufacturerAndModel
 	}
 }
 Write-Progress -Activity "Updating/adding Monitors" -Status "Ready" -Completed

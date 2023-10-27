@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Mon Mar 13 2023
+# Last Modified: Fri Oct 27 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2023-10-27	CJ	Upgraded Get-RMMDeviceDetails function to support esxi hosts and printers
 ###
 
 param(
@@ -185,20 +186,42 @@ $RMM_Devices = Get-DrmmAccountDevices | Sort-Object -property @{Expression='site
 # The below function will add more details to the RMM device (serial number, manufacturer, model, etc)
 function Get-RMMDeviceDetails ($Device)
 {
-	if ($Device -and "serialNumber" -notin $Device.PSObject.Properties.Name) {
+	if ($Device -and "serialNumber" -notin $Device.PSObject.Properties.Name -and $Device.deviceClass -in @("device", "esxihost", "printer")) {
 		$Device | Add-Member -NotePropertyName serialNumber -NotePropertyValue $false
 		$Device | Add-Member -NotePropertyName manufacturer -NotePropertyValue $false
 		$Device | Add-Member -NotePropertyName model -NotePropertyValue $false
 		$Device | Add-Member -NotePropertyName Nics -NotePropertyValue @()
 		$Device | Add-Member -NotePropertyName url -NotePropertyValue $false
 
-		$AuditDevice = Get-DrmmAuditDevice $Device.uid
-		if ($AuditDevice) {
-			$Device.serialNumber = $AuditDevice.bios.serialNumber
-			$Device.manufacturer = $AuditDevice.systemInfo.manufacturer
-			$Device.model = $AuditDevice.systemInfo.model
-			$Device.Nics = @($AuditDevice.nics | Where-Object { $Nic = $_; $_.macAddress -and ($NetworkAdapterBlacklist | Where-Object { $Nic.instance -like $_ }).Count -eq 0 } | Select-Object instance, ipv4, macAddress)
-			$Device.url = $AuditDevice.portalUrl
+		if ($Device.deviceClass -eq "device") {
+			$AuditDevice = Get-DrmmAuditDevice $Device.uid
+			if ($AuditDevice) {
+				$Device.serialNumber = $AuditDevice.bios.serialNumber
+				$Device.manufacturer = $AuditDevice.systemInfo.manufacturer
+				$Device.model = $AuditDevice.systemInfo.model
+				$Device.Nics = @($AuditDevice.nics | Where-Object { $Nic = $_; $_.macAddress -and ($NetworkAdapterBlacklist | Where-Object { $Nic.instance -like $_ }).Count -eq 0 } | Select-Object instance, ipv4, macAddress)
+				$Device.url = $AuditDevice.portalUrl
+			}
+		} elseif ($Device.deviceClass -eq "esxihost") {
+			$AuditDevice = Get-DrmmAuditESXi $Device.uid
+			if ($AuditDevice) {
+				$Device.serialNumber = $AuditDevice.systemInfo.serviceTag
+				$Device.manufacturer = $AuditDevice.systemInfo.manufacturer
+				$Device.model = $AuditDevice.systemInfo.model
+				$Device.Nics = @($AuditDevice.nics | Where-Object { $Nic = $_; $_.macAddress -and ($NetworkAdapterBlacklist | Where-Object { $Nic.instance -like $_ }).Count -eq 0 } | Select-Object name, ipv4, macAddress)
+				$Device.url = $AuditDevice.portalUrl
+			}
+		} elseif ($Device.deviceClass -eq "printer") {
+			$AuditDevice = Get-DrmmAuditPrinter $Device.uid
+			if ($AuditDevice) {
+				if ($AuditDevice.snmpInfo.snmpSerial) {
+					$Device.serialNumber = $AuditDevice.snmpInfo.snmpSerial
+				}
+				$Device.manufacturer = $AuditDevice.systemInfo.manufacturer
+				$Device.model = $AuditDevice.systemInfo.model
+				$Device.Nics = @()
+				$Device.url = $AuditDevice.portalUrl
+			}
 		}
 	}
 }

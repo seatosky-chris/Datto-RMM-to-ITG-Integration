@@ -959,7 +959,8 @@ if ($FullCheck) {
 		$MatchedDevices[$RMMSite.id] = [System.Collections.ArrayList]@()
 
 		$RMM_OrgDevices = $RMM_Devices | Where-Object { $_.siteId -eq $RMMSite.id }
-		if (($RMM_OrgDevices | Measure-Object).Count -lt 1) {
+		$RMMDeviceCount = ($RMM_OrgDevices | Measure-Object).Count
+		if ($RMMDeviceCount -lt 1) {
 			continue
 		}
 
@@ -967,7 +968,7 @@ if ($FullCheck) {
 		$i = 0
 		$RMM_OrgDevices | ForEach-Object { 
 			$i++
-			[int]$PercentComplete = ($i / $RMM_OrgDevices.count * 100)
+			[int]$PercentComplete = ($i / $RMMDeviceCount * 100)
 			Write-Progress -Activity "Getting RMM device details for site '$($RMMSite.Name)'" -PercentComplete $PercentComplete -Status ("Working - " + $PercentComplete + "%")
 			Get-RMMDeviceDetails -Device $_
 		 }

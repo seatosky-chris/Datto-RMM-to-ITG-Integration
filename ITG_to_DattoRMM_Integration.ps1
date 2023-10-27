@@ -546,8 +546,7 @@ function Get-ITGOperatingSystem {
 # Function to convert imported UTC date/times to local time for easier comparisons
 function Convert-UTCtoLocal {
 	param( [parameter(Mandatory=$true)] [String] $UTCTime )
-	$strCurrentTimeZone = (Get-WmiObject win32_timezone).StandardName 
-	$TZ = [System.TimeZoneInfo]::FindSystemTimeZoneById($strCurrentTimeZone) 
+	$TZ = [System.TimeZoneInfo]::Local
 	$LocalTime = [System.TimeZoneInfo]::ConvertTimeFromUtc($UTCTime, $TZ)
 	return $LocalTime
 }

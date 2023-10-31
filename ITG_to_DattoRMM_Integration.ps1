@@ -19,7 +19,8 @@
 ###
 
 param(
-	$FullCheck = $false
+	$FullCheck = $false,
+	$StepThroughUpdates = $true
 )
 
 . "$PSScriptRoot\Config.ps1" # Config
@@ -1266,8 +1267,10 @@ if ($FullCheck) {
 				Write-Host "Updating device: $($ITGDevice.attributes.name)" -ForegroundColor Green
 				Write-PSFMessage -Level Verbose -Message "Updating device: $($ITGDevice.attributes.name)"
 				$UpdatedITGDevice
-				Write-Host "Press any key to continue..."
-				$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+				if ($StepThroughUpdates) {
+					Write-Host "Press any key to continue..."
+					$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+				}
 
 				$ConfigurationUpdate = @{
 					'type' = 'configurations'

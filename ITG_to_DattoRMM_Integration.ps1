@@ -77,8 +77,6 @@ Function Test-IfAlreadyRunning {
 		[String]$OtherCmdLine = $PsCmdLine.commandline
 		#Are other instances of this script already running?
 		If (($OtherCmdLine -match $ScriptName) -And ($OtherPID -ne $PID) ){
-			Write-host "PID [$OtherPID] is already running this script [$ScriptName]"
-			Write-host "Exiting this instance. (PID=[$PID])..."
 			Write-PSFMessage -Level Error -Message "PID [$OtherPID] is already running this script [$ScriptName]"
 			Write-PSFMessage -Level Error -Message "Exiting this instance. (PID=[$PID])..."
 			Start-Sleep -Second 7
@@ -232,7 +230,6 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 			$MatchedSites[$RMMSite.id] = (@($ITGSite) | Select-Object -First 1)
 			Write-PSFMessage -Level Verbose -Message "Matched '$($RMMSite.name)' (RMM) to $($ITGSite.attributes.name) (ITG)."
 		} else {
-			Write-Host "Could not find the RMM site '$($RMMSite.name)' in ITG." -ForegroundColor Red
 			Write-PSFMessage -Level Error -Message "Could not find the RMM site '$($RMMSite.name)' in ITG."
 		}
 	}

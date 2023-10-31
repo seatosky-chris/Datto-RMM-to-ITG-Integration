@@ -132,7 +132,6 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 			$MatchedSites[$RMMSite.id] = (@($ITGSite) | Select-Object -First 1)
 			Write-PSFMessage -Level Verbose -Message "Matched '$($RMMSite.name)' (RMM) to $($ITGSite.attributes.name) (ITG)."
 		} else {
-			Write-Host "Could not find the RMM site '$($RMMSite.name)' in ITG." -ForegroundColor Red
 			Write-PSFMessage -Level Error -Message "Could not find the RMM site '$($RMMSite.name)' in ITG."
 		}
 	}

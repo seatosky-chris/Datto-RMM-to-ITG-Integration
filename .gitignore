@@ -2,5 +2,6 @@ Config.ps1
 FullCheckLastRun.txt
 DuplicateCleanup-AfterBadScriptRun.ps1
 DuplicateCleanup-MiscDuplicates.ps1
+Logs/
 *.bak
 *.csv

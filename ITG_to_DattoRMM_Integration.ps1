@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Fri Oct 27 2023
+# Last Modified: Tue Oct 31 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -131,7 +131,7 @@ $MatchedSites = @{}
 
 if ($ITG_Sites -and $ITG_Sites.data) {
 	foreach ($RMMSite in $RMM_Sites) {
-		if ($RMMSite.name -eq "Deleted Devices") {
+		if ($RMMSite.name -in @("Deleted Devices", "Managed", "OnDemand")) {
 			continue
 		}
 

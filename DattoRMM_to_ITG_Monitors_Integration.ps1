@@ -4,7 +4,7 @@
 # Created Date: Tuesday, May 16th 2023, 3:59:48 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Thu Jul 06 2023
+# Last Modified: Tue Oct 31 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2023-10-31	CJ	Implemented logging
 ###
 
 . "$PSScriptRoot\Config.ps1" # Config
@@ -29,6 +30,12 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 	[Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 3072)
 	Write-Output "This device is using an old version of TLS. Temporarily changed to use TLS v1.2."
 }
+
+# Setup logging
+If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
+$logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-rmm_to_itg_monitors-$(Get-date -f 'yyyyMMddHHmmss').txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+Write-PSFMessage -Level Verbose -Message "Starting the Datto RMM to ITG Monitors Integration."
 
 # Import/Install any required modules
 If (Get-Module -ListAvailable -Name "DattoRMM") {Import-module DattoRMM -Force} Else { install-module DattoRMM -Force; import-module DattoRMM -Force}
@@ -58,15 +65,18 @@ while ($ITGModels.links.next) {
 	$ITGModels.links = $Models_Next.links
 }
 $ITGModels = $ITGModels.data
+Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers and $($ITGModels.count) models."
 
 # Loop through all RMM companies and match to related ITG company
 $RMM_Sites = Get-DrmmAccountSites | Sort-Object -Property Name
 $ITG_Sites = Get-ITGlueOrganizations -page_size 1000
 $MatchedSites = @{}
+Write-PSFMessage -Level Verbose -Message "Found $($RMM_Sites.count) RMM Sites and $($ITG_Sites.count) ITG Sites."
 
 if ($ITG_Sites -and $ITG_Sites.data) {
 	foreach ($RMMSite in $RMM_Sites) {
-		if ($RMMSite.name -eq "Deleted Devices") {
+		if ($RMMSite.name -in @("Deleted Devices", "Managed", "OnDemand")) {
+			Write-PSFMessage -Level Warning -Message "Skipped the RMM site '$($RMMSite.name)'"
 			continue
 		}
 
@@ -109,8 +119,10 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 
 		if ($ITGSite) {
 			$MatchedSites[$RMMSite.id] = (@($ITGSite) | Select-Object -First 1)
+			Write-PSFMessage -Level Verbose -Message "Matched '$($RMMSite.name)' (RMM) to $($ITGSite.attributes.name) (ITG)."
 		} else {
 			Write-Host "Could not find the RMM site '$($RMMSite.name)' in ITG." -ForegroundColor Red
+			Write-PSFMessage -Level Error -Message "Could not find the RMM site '$($RMMSite.name)' in ITG."
 		}
 	}
 }
@@ -118,6 +130,7 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 # Get RMM Devices for all organizations
 $RMM_Devices = Get-DrmmAccountDevices | Sort-Object -property @{Expression='sitename'; Ascending=$true}, @{Expression='description'; Ascending=$true} | Where-Object {$_.sitename -ne "Deleted Devices"}
 $DevicesWithMonitors = $RMM_Devices | Where-Object { $_.udf.$MonitorUDF -and ($_.udf.$MonitorUDF -like "``[*" -or $_.udf.$MonitorUDF -like "{*") }
+Write-PSFMessage -Level Verbose -Message "Grabbed $($RMM_Devices.count) RMM Devices, $($DevicesWithMonitors.count) devices have monitors."
 
 Function TimedPrompt($prompt,$secondsToWait){
     Write-Host -NoNewline $prompt
@@ -162,7 +175,9 @@ if (!$ITG_Monitors) {
 		exit
 	}
 	Write-Host "No monitors were found in ITG, user input indicates that this is a first time run." -ForegroundColor Yellow
+	Write-PSFMessage -Level Verbose -Message "No monitors were found in ITG, user input indicates that this is a first time run."
 }
+Write-PSFMessage -Level Verbose -Message "Grabbed $($ITG_Monitors.count) monitor type configurations from ITG."
 
 # Get all Monitor EOL's from ITG
 $ITG_MonitorEOLs = Get-ITGlueFlexibleAssets -page_size "1000" -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
@@ -185,10 +200,13 @@ if (!$ITG_MonitorEOLs) {
 		exit
 	}
 	Write-Host "No EOL assets were found in ITG, user input indicates that this is a first time run." -ForegroundColor Yellow
+	Write-PSFMessage -Level Verbose -Message "No EOL assets were found in ITG, user input indicates that this is a first time run."
 }
+Write-PSFMessage -Level Verbose -Message "Grabbed $($ITG_MonitorEOLs.count) Monitor EOL's from ITG."
 
 $DisplayTypes = $AllMonitors | Select-Object -ExpandProperty DisplayType | Sort-Object -Unique
 $DisplayTypes += "DP"
+Write-PSFMessage -Level Verbose -Message "Display types found: $($DisplayTypes -join ", ")"
 
 $DevicesWithMonitors_Friendly = @()
 $AllMonitors = @()
@@ -833,6 +851,7 @@ function New-ITGMonitor ($MonitorDetails, $ITGManufacturerAndModel = $false)
 
 	if (!$ITGOrg) {
 		Write-Error "Could not create new monitor as no matching ITG Org was found. Device: $($MonitorDetails.AttachedDevice), Serial: $($MonitorDetails.SerialNumber), RMMSiteID: $($MonitorDetails.RMMSiteID)"
+		Write-PSFMessage -Level Verbose -Message "Could not create new monitor as no matching ITG Org was found. Device: $($MonitorDetails.AttachedDevice), Serial: $($MonitorDetails.SerialNumber), RMMSiteID: $($MonitorDetails.RMMSiteID)"
 		return $false
 	}
 
@@ -920,6 +939,7 @@ function New-ITGMonitor ($MonitorDetails, $ITGManufacturerAndModel = $false)
 
 		if ($NewITGConfig -and $NewITGConfig.data[0].id) {
 			Write-Host "Added new monitor to ITG: $($NewConfig.attributes.name) (ID: $($NewITGConfig.data[0].id))" -ForegroundColor Green
+			Write-PSFMessage -Level Verbose -Message "Added new monitor to ITG: $($NewConfig.attributes.name) (ID: $($NewITGConfig.data[0].id))"
 
 			# Add the configuration interface 
 			# (we do this here because the New-ITGConfigInterface command works with the 'port' field, when creating a new config it does not)
@@ -1163,6 +1183,7 @@ function Update-ITGMonitor ($ITGMonitor, $MonitorDetails, $ITGManufacturerAndMod
 
 	if ($UpdatesCompleted) {
 		Write-Host "Updated monitor in ITG: $($ITGMonitor.attributes.name) (ID: $($ITGMonitor.id))" -ForegroundColor Cyan
+		Write-PSFMessage -Level Verbose -Message "Updated monitor in ITG: $($ITGMonitor.attributes.name) (ID: $($ITGMonitor.id))"
 
 		# Update the related items with the related device(s) if missing
 		$ITGDetails = Get-ITGlueConfigurations -id $ITGMonitor.id -include 'related_items'
@@ -1331,6 +1352,7 @@ function Update-ITGMonitor_Disconnected ($ITGMonitor)
 
 	if ($UpdatesCompleted) {
 		Write-Host "Updated monitor in ITG, CLEARED Connection: $($ITGMonitor.attributes.name) (ID: $($ITGMonitor.id))" -ForegroundColor Yellow
+		Write-PSFMessage -Level Verbose -Message "Updated monitor in ITG, CLEARED Connection: $($ITGMonitor.attributes.name) (ID: $($ITGMonitor.id))"
 
 		# Update the related items with the related device(s) if missing
 		$ITGDetails = Get-ITGlueConfigurations -id $ITGMonitor.id -include 'related_items'

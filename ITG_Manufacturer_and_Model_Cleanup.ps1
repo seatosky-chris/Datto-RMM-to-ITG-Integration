@@ -4,7 +4,7 @@
 # Created Date: Tuesday, November 15th 2022, 10:13:02 am
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Mar 07 2023
+# Last Modified: Tue Oct 31 2023
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2023-10-31	CJ	Implemented logging
 ###
 
 
@@ -26,6 +27,12 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 	Write-Output "This device is using an old version of TLS. Temporarily changed to use TLS v1.2."
 	Write-PSFMessage -Level Warning -Message "Temporarily changed TLS to TLS v1.2."
 }
+
+# Setup logging
+If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
+$logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_man_mod_cleanup-$(Get-date -f 'yyyyMMddHHmmss').txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+Write-PSFMessage -Level Verbose -Message "Starting the ITG Manufacturer and Model cleanup."
 
 # Import/Install any required modules
 If (Get-Module -ListAvailable -Name "ITGlueAPI") {Import-module ITGlueAPI -Force} Else { install-module ITGlueAPI -Force; import-module ITGlueAPI -Force}
@@ -58,6 +65,7 @@ while ($ITG_OrgDevices.links.next) {
 	$ITG_OrgDevices.links = $Devices_Next.links
 }
 $ITG_OrgDevices = $ITG_OrgDevices.data
+Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers, $($ITGModels.count) models, and $($ITG_OrgDevices.count) configurations from ITG."
 
 # Find all Manufacturers that need to be cleaned up (move models from old to new) and any that need to be re-added (with a cleaned up name)
 $ManufacturersToFix = @()
@@ -91,6 +99,7 @@ foreach ($Manufacturer in $ITGManufacturers) {
 		}
 	}
 }
+Write-PSFMessage -Level Verbose -Message "Found $($ManufacturersToFix.count) manufacturers to fix and $($ManufacturersToAdd.count) to add."
 
 foreach ($Manufacturer in ($ManufacturersToAdd.New | Sort-Object -Unique)) {
 	New-ITGlueManufacturers -data @{
@@ -99,6 +108,7 @@ foreach ($Manufacturer in ($ManufacturersToAdd.New | Sort-Object -Unique)) {
 			name = $Manufacturer
 		}
 	}
+	Write-PSFMessage -Level Verbose -Message "Added new Manufacturer: $($Manufacturer)"
 }
 
 if (($ManufacturersToAdd | Measure-Object).Count -gt 0) {
@@ -151,6 +161,7 @@ foreach ($FixManufacturer in $ManufacturersToFix) {
 		}
 		Start-Sleep -Milliseconds 500
 	}
+	Write-PSFMessage -Level Verbose -Message "Moved $($ModelsToMove.count) models from the manufacturer '$($OldITGManufacturer.attributes.name)' to '$($NewITGManufacturer.attributes.name)'."
 
 	# Cleanup any devices that still have this manufacturer set
 	$ToFixDevices = $ITG_OrgDevices | Where-Object { $_.attributes."manufacturer-id" -eq $FixManufacturer.OldID }
@@ -204,9 +215,11 @@ foreach ($FixManufacturer in $ManufacturersToFix) {
 			Write-Host "Could not find the current model for device '$($BadDevice.attributes.name)', please update manually. Url: $($BadDevice.attributes.'resource-url')" -ForegroundColor Yellow
 		}
 	}
+	Write-PSFMessage -Level Verbose -Message "Moved $($ToFixDevices.count) devices from the manufacturer '$($OldITGManufacturer.attributes.name)' to '$($NewITGManufacturer.attributes.name)'."
 
 	# Delete old manufacturer
-	Write-Host "Delete Old Manufacturer: $($OldITGManufacturer.attributes.name)" -ForegroundColor Red
+	Write-Host "Deleted Old Manufacturer: $($OldITGManufacturer.attributes.name)" -ForegroundColor Red
+	Write-PSFMessage -Level Verbose -Message "Deleted Old Manufacturer: $($OldITGManufacturer.attributes.name)"
 }
 
 # $ModelsWithoutMake = $ITGModels | Where-Object { !$_.attributes."manufacturer-id" }

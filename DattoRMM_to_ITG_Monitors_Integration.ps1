@@ -820,7 +820,7 @@ function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel =
 				}
 			} else {
 				# This is the only device in the EOL asset, remove the entire EOL asset
-				Remove-ITGlueFlexibleAssets -id $Remove_EOLAsset.id
+				Remove-ITGlueFlexibleAssets -id $Remove_EOLAsset.id -Confirm:$False
 			}
 		}
 	}

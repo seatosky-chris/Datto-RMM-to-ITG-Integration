@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2023-10-31	CJ	Implemented logging
 # 2023-10-27	CJ	Upgraded Get-RMMDeviceDetails function to support esxi hosts and printers
 ###
 
@@ -28,8 +29,13 @@ $CurrentTLS = [System.Net.ServicePointManager]::SecurityProtocol
 if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 	[Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 3072)
 	Write-Output "This device is using an old version of TLS. Temporarily changed to use TLS v1.2."
-	Write-PSFMessage -Level Warning -Message "Temporarily changed TLS to TLS v1.2."
 }
+
+# Setup logging
+If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
+$logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-$(Get-date -f 'yyyyMMddHHmmss').txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+Write-PSFMessage -Level Verbose -Message "Starting device matching script."
 
 Function Test-IfAlreadyRunning {
     <#
@@ -72,6 +78,8 @@ Function Test-IfAlreadyRunning {
 		If (($OtherCmdLine -match $ScriptName) -And ($OtherPID -ne $PID) ){
 			Write-host "PID [$OtherPID] is already running this script [$ScriptName]"
 			Write-host "Exiting this instance. (PID=[$PID])..."
+			Write-PSFMessage -Level Error -Message "PID [$OtherPID] is already running this script [$ScriptName]"
+			Write-PSFMessage -Level Error -Message "Exiting this instance. (PID=[$PID])..."
 			Start-Sleep -Second 7
 			Exit
 		}
@@ -108,6 +116,7 @@ while ($ITGModels.links.next) {
 	$ITGModels.links = $Models_Next.links
 }
 $ITGModels = $ITGModels.data
+Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers, $($ITGModels.count) models, and $($ITGOperatingSystems.count) OS's from ITG."
 
 $ITGPasswords = @{} # We'll grab these later if we need them
 
@@ -121,6 +130,7 @@ if (Test-Path -Path ($PSScriptRoot + "\FullCheckLastRun.txt")) {
 }
 
 if ((!$FullCheckLastRun -or $FullCheckLastRun -lt (Get-Date).AddDays(-7)) -and ((Get-Date).Hour -gt 23 -or (Get-Date).Hour -lt 5)) {
+	Write-PSFMessage -Level Verbose -Message "Performing a full check due to time of last run."
 	$FullCheck = $true
 }
 
@@ -128,10 +138,12 @@ if ((!$FullCheckLastRun -or $FullCheckLastRun -lt (Get-Date).AddDays(-7)) -and (
 $RMM_Sites = Get-DrmmAccountSites | Sort-Object -Property Name
 $ITG_Sites = Get-ITGlueOrganizations -page_size 1000
 $MatchedSites = @{}
+Write-PSFMessage -Level Verbose -Message "Found $($RMM_Sites.count) RMM Sites and $($ITG_Sites.count) ITG Sites."
 
 if ($ITG_Sites -and $ITG_Sites.data) {
 	foreach ($RMMSite in $RMM_Sites) {
 		if ($RMMSite.name -in @("Deleted Devices", "Managed", "OnDemand")) {
+			Write-PSFMessage -Level Warning -Message "Skipped the RMM site '$($RMMSite.name)'"
 			continue
 		}
 
@@ -174,14 +186,17 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 
 		if ($ITGSite) {
 			$MatchedSites[$RMMSite.id] = (@($ITGSite) | Select-Object -First 1)
+			Write-PSFMessage -Level Verbose -Message "Matched '$($RMMSite.name)' (RMM) to $($ITGSite.attributes.name) (ITG)."
 		} else {
 			Write-Host "Could not find the RMM site '$($RMMSite.name)' in ITG." -ForegroundColor Red
+			Write-PSFMessage -Level Error -Message "Could not find the RMM site '$($RMMSite.name)' in ITG."
 		}
 	}
 }
 
 # Get RMM Devices for all organizations
 $RMM_Devices = Get-DrmmAccountDevices | Sort-Object -property @{Expression='sitename'; Ascending=$true}, @{Expression='description'; Ascending=$true} | Where-Object {$_.sitename -ne "Deleted Devices"}
+Write-PSFMessage -Level Verbose -Message "Grabbed $($RMM_Devices.count) RMM Devices."
 
 # The below function will add more details to the RMM device (serial number, manufacturer, model, etc)
 function Get-RMMDeviceDetails ($Device)
@@ -761,6 +776,7 @@ function New-ITGDevice ($RMMDevice)
 	$RelatedDevices = Get-RelatedITGDevices -RMMDevice $RMMDevice
 	if ($RelatedDevices -and ($RelatedDevices | Measure-Object).Count -gt 0) {
 		Write-Host "Skipped adding new device to ITG: $($RMMDevice.hostname) (it appears to already exist)"
+		Write-PSFMessage -Level Verbose -Message "Skipped adding new device to ITG: $($RMMDevice.hostname) (it appears to already exist)"
 
 		if ($false -notin $RelatedDevices.attributes.archived) {
 			$RelatedDevice = $RelatedDevices | Sort-Object -Property {$_.attributes."updated-at"} -Descending | Select-Object -First 1
@@ -843,6 +859,7 @@ function New-ITGDevice ($RMMDevice)
 		$OrgID = ($MatchedSites[$RMMDevice.siteId]).id
 		$NewITGConfig = New-ITGlueConfigurations -organization_id $OrgID -data $NewConfig
 		Write-Host "Added new device to ITG: $($NewConfig.attributes.name)"
+		Write-PSFMessage -Level Verbose -Message "Added new device to ITG: $($NewConfig.attributes.name)"
 
 		if ($NewITGConfig -and $NewITGConfig.data[0].id) {
 			# Get any related passwords and attach them as related items to the new config
@@ -872,7 +889,8 @@ $DeletedDevices = [System.Collections.ArrayList]@()
 $path = "$PSScriptRoot\DeviceTracking"
 If(!(test-path -PathType container $path))
 {
-      New-Item -ItemType Directory -Path $path | Out-Null
+    New-Item -ItemType Directory -Path $path | Out-Null
+	Write-PSFMessage -Level Verbose -Message "Created device tracking folder: $path"
 }
 
 $MostRecent = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList*.csv" | Sort-Object -Descending | Select-Object -First 1
@@ -880,45 +898,58 @@ $MostRecent = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList*.cs
 if ($null -eq $MostRecent){
     # If we don't have a list of machines create a baseline and exit.
     Write-Host "No existing device list found. Saving current list to create baseline."
+	Write-PSFMessage -Level Verbose -Message "No existing device list found. Saving current list to create baseline."
+	
     $RMM_Devices | ConvertTo-Csv -NoTypeInformation | Out-File "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList-$(get-date -format yyyy-MM-dd-HHmm).csv"
 	$FullCheck = $true
+	Write-PSFMessage -Level Verbose -Message "Exported RMM Device List to: $PSScriptRoot\DeviceTracking\DattoRMMDeviceList-$(get-date -format yyyy-MM-dd-HHmm).csv"
 } else {
     # Since there is a list available, we will start comparing the list of devices.
-    write-host "Changes since $($MostRecent.LastWriteTime):"
+    write-host "Reviewing changes since $($MostRecent.LastWriteTime):"
     write-host "`nGetting current device list for DattoRMM..."
+	Write-PSFMessage -Level Verbose -Message "Reviewing changes since $($MostRecent.LastWriteTime):"
 
     $RMM_Devices | ConvertTo-Csv -NoTypeInformation | Out-File "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList-$(get-date -format yyyy-MM-dd-HHmm).csv"
+	Write-PSFMessage -Level Verbose -Message "Exported RMM Device List to: $PSScriptRoot\DeviceTracking\DattoRMMDeviceList-$(get-date -format yyyy-MM-dd-HHmm).csv"
     $PreviousDevices = Import-Csv $MostRecent.FullName | sort-object -property @{Expression='sitename'; Ascending=$true}, @{Expression='description'; Ascending=$true}
+	Write-PSFMessage -Level Verbose -Message "Found $(($PreviousDevices | Measure-Object).Count) previous devices."
     
 	if (($PreviousDevices | Measure-Object).Count -gt 1) {
 		# First, lets look for deletions.
 		Write-host "`nLooking for deleted devices...`n"
+		Write-PSFMessage -Level Verbose -Message "`nLooking for deleted devices...`n"
 		foreach ($PrevDevice in $PreviousDevices) {
 			if ($RMM_Devices.uid -notcontains $PrevDevice.uid){
 				write-host "Device $($PrevDevice.hostname) deleted from $($PrevDevice.siteName)."
+				Write-PSFMessage -Level Verbose -Message "Device $($PrevDevice.hostname) deleted from $($PrevDevice.siteName)."
 				[void]$DeletedDevices.add($PrevDevice)
 			}
 		}
 		if ($DeletedDevices.count -gt 0) {
 			$DeletedDevices | ConvertTo-Csv -NoTypeInformation | Out-File "$PSScriptRoot\DeviceTracking\DattoRMMDeviceDeletions-$(get-date -format yyyy-MM-dd-HHmm).csv"
 			Write-Host "Saved deleted devices to DeviceTracking\DattoRMMDeviceDeletions-<date stamp>.csv"
+			Write-PSFMessage -Level Verbose -Message "Saved deleted devices to DeviceTracking\DattoRMMDeviceDeletions-<date stamp>.csv"
 
 			# TODO: Archive $DeletedDevices in ITG (handle in Device Audit?)
 		} else {
 			write-host "`nNo deleted devices found in Datto RMM."
+			Write-PSFMessage -Level Verbose -Message "`nNo deleted devices found in Datto RMM."
 		}
 
 		# Next, lets look for new devices.
 		Write-host "`nLooking for new devices...`n"
+		Write-PSFMessage -Level Verbose -Message "`nLooking for new devices...`n"
 		foreach ($CurDevice in $RMM_Devices) {
 			if ($PreviousDevices.uid -notcontains $CurDevice.uid){
 				Write-host "Found new device $($CurDevice.hostname) for $($CurDevice.siteName)."
+				Write-PSFMessage -Level Verbose -Message "Found new device $($CurDevice.hostname) for $($CurDevice.siteName)."
 				[void]$NewDevices.add($CurDevice)
 			}
 		}
 		if ($NewDevices.count -gt 0){
 			$NewDevices | ConvertTo-Csv -NoTypeInformation | Out-File "$PSScriptRoot\DeviceTracking\DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv"
 			Write-host "Saved new devices to DeviceTracking\DattoRMMDeviceAdditions-<date stamp>.csv"
+			Write-PSFMessage -Level Verbose -Message "Saved new devices to DeviceTracking\DattoRMMDeviceAdditions-<date stamp>.csv"
 
 			# Add new devices to ITG
 			if ($NewDevices.Count -lt 100) { # For safety, if there is an issue we dont want to add a bunch of duplicates
@@ -926,10 +957,11 @@ if ($null -eq $MostRecent){
 					New-ITGDevice -RMMDevice $NewDevice
 				}
 			} else {
-				"Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv" | Out-File "$PSScriptRoot\Error-$(get-date -format yyyy-MM-dd-HHmm).txt"
+				Write-PSFMessage -Level Warning -Message "Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv"
 			}
 		} else {
 			Write-host "`nNo new devices have been added to Datto RMM."
+			Write-PSFMessage -Level Verbose -Message "`nNo new devices have been added to Datto RMM."
 		}
 
 		# Cleanup old DeviceLists
@@ -952,6 +984,9 @@ if ($FullCheck) {
 	$DeletedDevices = [System.Collections.ArrayList]@()
 	$ITG_Devices = @{}
 
+	Write-PSFMessage -Level Verbose -Message "==============================="
+	Write-PSFMessage -Level Verbose -Message "Running a Full Audit on $($MatchedSites.count) matched sites."
+
 	$MatchedSites.GetEnumerator() | ForEach-Object {
 		$RMMSiteID = $_.key
 		$RMMSite = $RMM_Sites | Where-Object { $_.id -eq $RMMSiteID }
@@ -960,6 +995,7 @@ if ($FullCheck) {
 
 		$RMM_OrgDevices = $RMM_Devices | Where-Object { $_.siteId -eq $RMMSite.id }
 		$RMMDeviceCount = ($RMM_OrgDevices | Measure-Object).Count
+		Write-PSFMessage -Level Verbose -Message "Auditing - RMM Site: $($RMMSite.name), ITG Site: $($ITGSite.attributes.name), Device Count: $RMMDeviceCount"
 		if ($RMMDeviceCount -lt 1) {
 			continue
 		}
@@ -983,6 +1019,7 @@ if ($FullCheck) {
 			$ITG_OrgDevices.data += $Devices_Next.data
 			$ITG_OrgDevices.links = $Devices_Next.links
 		}
+		Write-PSFMessage -Level Verbose -Message "Found $(($ITG_OrgDevices.data | Measure-Object).Count) ITG devices. (Total Count: $($ITG_OrgDevices.meta.'total-count'))"
 		if (($ITG_OrgDevices.data | Measure-Object).Count -lt 1 -and $ITG_OrgDevices.meta.'total-count' -lt 1) {
 			continue
 		}
@@ -1091,9 +1128,11 @@ if ($FullCheck) {
 			$Unmatched += $ITGDevice
 		}
 	}
+	Write-PSFMessage -Level Verbose -Message "Device Counts - New: $($NewDevices.count), Unmatched: $($Unmatched.count)"
 
 	if ($NewDevices.count -gt 0) {
         Write-host "New devices found, adding to ITG"
+		Write-PSFMessage -Level Verbose -Message "New devices found, adding to ITG"
 
 		# Add new devices to ITG
 		if ($NewDevices.Count -lt 100) { # For safety, if there is an issue we dont want to add a bunch of duplicates
@@ -1101,7 +1140,7 @@ if ($FullCheck) {
 				New-ITGDevice -RMMDevice $NewDevice
 			}
 		} else {
-			"Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv" | Out-File "$PSScriptRoot\Error-$(get-date -format yyyy-MM-dd-HHmm).txt"
+			Write-PSFMessage -Level Warning -Message "Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv"
 		}
     }
 
@@ -1110,14 +1149,18 @@ if ($FullCheck) {
 		$RMMSiteID = $_.key
 		$RMMSite = $RMM_Sites | Where-Object { $_.id -eq $RMMSiteID }
 		$ITGSite = $_.value
+		Write-PSFMessage -Level Verbose -Message "Checking for Updates - RMM Site: $($RMMSite.name)"
 
 		if (!$RMMSite -or !$ITGSite) {
+			Write-PSFMessage -Level Error -Message "Could not find RMM site or ITG site. Skipping..."
 			continue
 		}
 
 		if (!$MatchedDevices[$RMMSite.id] -or !$ITG_Devices[$ITGSite.id]) {
+			Write-PSFMessage -Level Error -Message "Found no matched devices or no ITG devices. Skipping..."
 			continue
 		}
+		Write-PSFMessage -Level Verbose -Message "Found $($MatchedDevices[$RMMSite.id].count) Matched Devices"
 
 		foreach ($Device in $MatchedDevices[$RMMSite.id]) {
 			$RMMDevice = $RMM_Devices | Where-Object { $_.id -eq $Device.rmm_match }
@@ -1221,6 +1264,7 @@ if ($FullCheck) {
 			if ($UpdateRequired) {
 
 				Write-Host "Updating device: $($ITGDevice.attributes.name)" -ForegroundColor Green
+				Write-PSFMessage -Level Verbose -Message "Updating device: $($ITGDevice.attributes.name)"
 				$UpdatedITGDevice
 				Write-Host "Press any key to continue..."
 				$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
@@ -1231,9 +1275,11 @@ if ($FullCheck) {
 				}
 				Set-ITGlueConfigurations -id $ITGDevice.id -data $ConfigurationUpdate
 				Write-Host "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
+				Write-PSFMessage -Level Verbose -Message "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
 			}
 		}
 	}
 
 	(Get-Date).ToString() | Out-File -FilePath ($PSScriptRoot + "\FullCheckLastRun.txt")
 }
+Wait-PSFMessage

@@ -4,6 +4,8 @@ This is a custom integration that will sync devices and device info from Datto R
 
 This script is still a **WIP**. We have been using it for a few months with success, but I cannot guarantee you won't run into any issues. Use it at your own risk.
 
+The script will automatically export logs to the Logs folder local to this integration. It will clean up any older than 1 week.
+
 ### Important things to know
 1. Currently the script will add devices and update them, but it will not remove or archive devices in ITG. We opted not to do this as sometimes devices would fall out of RMM but still be active in another one of our systems. I use our Device Audit script to instead compare activity in all our systems and archive devices in ITG that are no longer active anywhere. Currently it will output devices deleted in RMM to a csv file named: `DattoRMMDeviceDeletions-<date stamp>.csv`. It should be fairly easy to add auto-archive functionality, see line 829.
 

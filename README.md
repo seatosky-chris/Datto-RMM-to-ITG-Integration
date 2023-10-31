@@ -37,6 +37,8 @@ This is a separate set of components/scripts that will update and add ITG docume
 * An RMM component that queries all Windows devices for attached monitors and their info, and then updates a UDF with this info.
 * A PowerShell script that daily queries the RMM UDF, parses the monitor information for each device, and updates ITG.
 
+Please note that the RMM component gets whatever monitors are connected to the device when it runs. This means that if someone takes their laptop home and connects it to a home setup, their personal monitors may get added into your system. Likewise, this could happen wherever they connect their laptop. I don't have any good way of avoiding this, but you could potentially add an IP whitelist to the component, and only update the monitors if they are on a certain IP. 
+
 ### How it works
 The RMM component should be ran daily. This will query each device for attached monitors and get their info. The info gathered includes:
 * Manufacturer

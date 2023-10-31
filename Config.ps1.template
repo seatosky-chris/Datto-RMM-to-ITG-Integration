@@ -19,8 +19,9 @@ $IgnoreSerials =  @("To be filled by O.E.M.", "System Serial Number", "Default s
 #
 # The ID of the configuration status to use for any newly added devices 
 # This will generally be the ID of the Active status.
+# If you leave this set to the default, the script will help you set it on the first run.
 #
-$ITG_ConfigStatusID = 1
+$ITG_ConfigStatusID = $false
 
 ####################
 # $ITG_MonitorTypeID

@@ -104,6 +104,49 @@ if ($ITGAPIKey.Key) {
 # Connect to RMM
 Set-DrmmApiParameters -Url $DattoAPIKey.URL -Key $DattoAPIKey.Key -SecretKey $DattoAPIKey.SecretKey
 
+# Setup status config value if not already set
+$UpdatedConfig = $false
+if (!$ITG_ConfigStatusID) {
+	$ConfigStatuses = Get-ITGlueConfigurationStatuses
+	if ($ConfigStatuses -and $ConfigStatuses.data -and ($ConfigStatuses.data | Measure-Object).Count -gt 0) {
+		Write-Host "`$ITG_ConfigStatusID has not been set. Please select one of the following statuses to use for new configurations:" -ForegroundColor Yellow
+		$i = 0
+		foreach ($Status in $ConfigStatuses.data) {
+			$i++
+			Write-Host "$i - $($Status.attributes.name) (ID: $($Status.id))"
+		}
+		$StatusSelection = Read-Host "Choose an option, 1-$($i)"
+
+		if ($StatusSelection -and $StatusSelection -in @(1..$i)) {
+			$NewConfigStatus = $ConfigStatuses.data[$StatusSelection-1]
+			if ($NewConfigStatus) {
+				$ConfigFilePath = "$PSScriptRoot\Config.ps1"
+				$ConfigFile = Get-Content $ConfigFilePath
+				$ConfigFile = $ConfigFile.replace('$ITG_ConfigStatusID = $false', ('$ITG_ConfigStatusID = ' + $NewConfigStatus.id))
+				$ConfigFile | Set-Content $ConfigFilePath
+				$UpdatedConfig = $true
+			} else {
+				Write-Host "Could not find the select Config Status and could not set the configuration value. Please try running the script again or set the value manually. Exiting..." -ForegroundColor Red
+				$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+				exit
+			}
+		} else {
+			Write-Host "An incorrect Config Status selection was made. Could not set the configuration value. Please try running the script again or set the value manually. Exiting..." -ForegroundColor Red
+			$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+			exit
+		}
+	} else {
+		Write-Host "`$ITG_ConfigStatusID has not been set and no Statuses were found in ITG. Please fix this then try again. Exiting..." -ForegroundColor Red
+		$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+		exit
+	}
+}
+
+if ($UpdatedConfig) {
+	# Reload the config if updated
+	. "$PSScriptRoot\Config.ps1"
+}
+
 # Get auxilary ITG data
 $ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
 $ITGOperatingSystems = (Get-ITGlueOperatingSystems -page_size 1000).data

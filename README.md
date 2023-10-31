@@ -24,7 +24,7 @@ Once a week, the integration will perform a full audit where it checks each RMM 
 
 ### Setup
 1. Create a Config.ps1 file from the Config.ps1.template. 
-2. Get the ID of the Status you want to use for new configurations from ITG and use this for `$ITG_ConfigStatusID`. (Navigate to Account > Configuration Statuses, Edit the status then get the ID from the URL)
+2. Get the ID of the Status you want to use for new configurations from ITG and use this for `$ITG_ConfigStatusID`. (Navigate to Account > Configuration Statuses, Edit the status then get the ID from the URL). The `Active` status can be particularly difficult to get so I have implemented a helper function into the integration. If you leave this variable `$false`, the script will prompt you to choose an option on its first run and will automatically update the config value with the proper ID.
 3. Configure `$ITG_ConfigTypeIDs` for each RMM Device Type filling in device type ID's from ITG. (Navigate to Account > Configuration Types, Edit the type then get the ID from the URL)
 4. Fill in `$ITGAPIKey` with your ITG API details and `$DattoAPIKey` with your Datto RMM API details. If you use an ITG API key with password access, the integration will also tag existing passwords to newly created configurations.
 5. See the important points above, you may want to make changes to add auto device archiving, prevent manufacturer name cleanup, change the RMM ID field away from `installed-by`, and you may need to remove the safety check that prevents >100 devices being added to ITG.

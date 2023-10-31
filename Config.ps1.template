@@ -35,6 +35,7 @@ $ITG_MonitorTypeID = 3
 # $ITG_EOL_FlexibleAssetTypeID
 #
 # The ID of the End of Life Flexible Asset type
+# Set this to $false to disable the EOL feature
 #
 $ITG_EOL_FlexibleAssetTypeID = 30
 

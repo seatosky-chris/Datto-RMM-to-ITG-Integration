@@ -191,29 +191,33 @@ if (!$ITG_Monitors) {
 Write-PSFMessage -Level Verbose -Message "Grabbed $($ITG_Monitors.count) monitor type configurations from ITG."
 
 # Get all Monitor EOL's from ITG
-$ITG_MonitorEOLs = Get-ITGlueFlexibleAssets -page_size "1000" -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
-$i = 1
-while ($ITG_MonitorEOLs.links.next) {
-	$i++
-	$Monitors_Next = Get-ITGlueFlexibleAssets -page_size "1000" -page_number $i -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
-	$ITG_MonitorEOLs.data += $Monitors_Next.data
-	$ITG_MonitorEOLs.links = $Monitors_Next.links
-}
-if ($ITG_MonitorEOLs -and $ITG_MonitorEOLs.data) {
-	$ITG_MonitorEOLs = $ITG_MonitorEOLs.data
-	$ITG_MonitorEOLs = $ITG_MonitorEOLs | Where-Object { $_.attributes.name -like "*Monitor*" }
-	$ITG_MonitorEOLs = @($ITG_MonitorEOLs)
-}
-
-if (!$ITG_MonitorEOLs) {
-	$continue = TimedPrompt "No EOL assets could be pulled from ITG. Would you like to continue? 'Y' to continue, otherwise the script will exit in 10 seconds." 10
-	if (!$continue -or $continue.character -ne "Y") {
-		exit
+$EnableEOL = $false
+if ($ITG_EOL_FlexibleAssetTypeID) {
+	$ITG_MonitorEOLs = Get-ITGlueFlexibleAssets -page_size "1000" -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
+	$i = 1
+	while ($ITG_MonitorEOLs.links.next) {
+		$i++
+		$Monitors_Next = Get-ITGlueFlexibleAssets -page_size "1000" -page_number $i -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
+		$ITG_MonitorEOLs.data += $Monitors_Next.data
+		$ITG_MonitorEOLs.links = $Monitors_Next.links
 	}
-	Write-Host "No EOL assets were found in ITG, user input indicates that this is a first time run." -ForegroundColor Yellow
-	Write-PSFMessage -Level Verbose -Message "No EOL assets were found in ITG, user input indicates that this is a first time run."
+	if ($ITG_MonitorEOLs -and $ITG_MonitorEOLs.data) {
+		$ITG_MonitorEOLs = $ITG_MonitorEOLs.data
+		$ITG_MonitorEOLs = $ITG_MonitorEOLs | Where-Object { $_.attributes.name -like "*Monitor*" }
+		$ITG_MonitorEOLs = @($ITG_MonitorEOLs)
+	}
+
+	if (!$ITG_MonitorEOLs) {
+		$continue = TimedPrompt "No EOL assets could be pulled from ITG. Would you like to continue? 'Y' to continue, otherwise the script will exit in 10 seconds." 10
+		if (!$continue -or $continue.character -ne "Y") {
+			exit
+		}
+		Write-Host "No EOL assets were found in ITG, user input indicates that this is a first time run." -ForegroundColor Yellow
+		Write-PSFMessage -Level Verbose -Message "No EOL assets were found in ITG, user input indicates that this is a first time run."
+	}
+	$EnableEOL = $true
+	Write-PSFMessage -Level Verbose -Message "Grabbed $($ITG_MonitorEOLs.count) Monitor EOL's from ITG."
 }
-Write-PSFMessage -Level Verbose -Message "Grabbed $($ITG_MonitorEOLs.count) Monitor EOL's from ITG."
 
 $DisplayTypes = $AllMonitors | Select-Object -ExpandProperty DisplayType | Sort-Object -Unique
 $DisplayTypes += "DP"
@@ -682,7 +686,7 @@ function Get-EOLDate ($WarrantyDate) {
 # Takes an ITG monitor config asset and the EOL date
 # Returns the EOL asset
 function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel = $false) {
-	if (!$ITGMonitor -or !$EOLDate) {
+	if (!$ITGMonitor -or !$EOLDate -or !$EnableEOL) {
 		return
 	}
 	$EOLDateArr = $EOLDate.split("-")
@@ -981,34 +985,36 @@ function New-ITGMonitor ($MonitorDetails, $ITGManufacturerAndModel = $false)
 			}
 
 			# Add or attach to an End of Life asset
-			$EOLAssets = Get-RelatedEOLAssets -ITGMonitor $NewITGConfig.data[0] -EOLDate $EndOfLife -ITGManufacturerAndModel $ITGManufacturerAndModel
+			if ($EnableEOL) {
+				$EOLAssets = Get-RelatedEOLAssets -ITGMonitor $NewITGConfig.data[0] -EOLDate $EndOfLife -ITGManufacturerAndModel $ITGManufacturerAndModel
 
-			foreach ($EOLAsset in $EOLAssets) {
-				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $NewITGConfig.data[0].id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
-					# Device is already part of the EOL Asset, the eol asset was probably just created
-					continue 
-				}
+				foreach ($EOLAsset in $EOLAssets) {
+					if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $NewITGConfig.data[0].id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
+						# Device is already part of the EOL Asset, the eol asset was probably just created
+						continue 
+					}
 
-				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
-					$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
-					$UpdatedConfigurations += $NewITGConfig.data[0].id
-					$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
-				}
-				$UpdatedEOLAsset = 
-				@{
-					type = 'flexible-assets'
-					attributes = @{
-						traits = @{
-							description = $EOLAsset.attributes.traits.description
-							"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
-							"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
-							"configuration-s" = @($UpdatedConfigurations)
-							notes = $EOLAsset.attributes.traits.notes
+					if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
+						$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
+						$UpdatedConfigurations += $NewITGConfig.data[0].id
+						$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
+					}
+					$UpdatedEOLAsset = 
+					@{
+						type = 'flexible-assets'
+						attributes = @{
+							traits = @{
+								description = $EOLAsset.attributes.traits.description
+								"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
+								"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
+								"configuration-s" = @($UpdatedConfigurations)
+								notes = $EOLAsset.attributes.traits.notes
+							}
 						}
 					}
+					$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
+					$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id }
 				}
-				$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
-				$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id }
 			}
 		}
 	}
@@ -1242,34 +1248,36 @@ function Update-ITGMonitor ($ITGMonitor, $MonitorDetails, $ITGManufacturerAndMod
 		}
 
 		# Add or attach to an End of Life asset
-		$EOLAssets = Get-RelatedEOLAssets -ITGMonitor $ITGMonitor -EOLDate $EndOfLife -ITGManufacturerAndModel $ITGManufacturerAndModel
+		if ($EnableEOL) {
+			$EOLAssets = Get-RelatedEOLAssets -ITGMonitor $ITGMonitor -EOLDate $EndOfLife -ITGManufacturerAndModel $ITGManufacturerAndModel
 
-		foreach ($EOLAsset in $EOLAssets) {
-			if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
-				# Device is already part of the EOL Asset, skip it
-				continue 
-			}
+			foreach ($EOLAsset in $EOLAssets) {
+				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
+					# Device is already part of the EOL Asset, skip it
+					continue 
+				}
 
-			if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
-				$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
-				$UpdatedConfigurations += $ITGMonitor.id
-				$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
-			}
-			$UpdatedEOLAsset = 
-			@{
-				type = 'flexible-assets'
-				attributes = @{
-					traits = @{
-						description = $EOLAsset.attributes.traits.description
-						"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
-						"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
-						"configuration-s" = @($UpdatedConfigurations)
-						notes = $EOLAsset.attributes.traits.notes
+				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
+					$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
+					$UpdatedConfigurations += $ITGMonitor.id
+					$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
+				}
+				$UpdatedEOLAsset = 
+				@{
+					type = 'flexible-assets'
+					attributes = @{
+						traits = @{
+							description = $EOLAsset.attributes.traits.description
+							"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
+							"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
+							"configuration-s" = @($UpdatedConfigurations)
+							notes = $EOLAsset.attributes.traits.notes
+						}
 					}
 				}
+				$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
+				$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id}
 			}
-			$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
-			$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id}
 		}
 	}
 }
@@ -1597,7 +1605,7 @@ foreach ($Monitor in $AllMonitors) {
 					$UpdateRequired = $true
 					break
 				}
-				if (($ITG_MonitorEOLs | Where-Object { $ITG_MatchedMonitor.id -in $_.attributes.traits.'configuration-s'.values.id } | Measure-Object).count -lt 1) {
+				if ($EnableEOL -and ($ITG_MonitorEOLs | Where-Object { $ITG_MatchedMonitor.id -in $_.attributes.traits.'configuration-s'.values.id } | Measure-Object).count -lt 1) {
 					$UpdateRequired = $true
 					break
 				}

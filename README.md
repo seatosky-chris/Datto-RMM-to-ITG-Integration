@@ -33,8 +33,8 @@ Once a week, the integration will perform a full audit where it checks each RMM 
 
 # Datto RMM to ITG Monitors Integration
 
-This is a separate set of components/scripts that will update and add ITG documentation for Monitors found in RMM. This integration allows you to keep track of a monitor's location, when when it is moved from 1 device to another. It consists of 2 parts:
-* An RMM that queries all Windows devices for attached monitors and their info, and then updates a UDF with this info.
+This is a separate set of components/scripts that will update and add ITG documentation for Monitors found in RMM. This integration allows you to keep track of a monitor's location, when it is moved from 1 device to another. This only supports Windows devices. It consists of 2 parts:
+* An RMM component that queries all Windows devices for attached monitors and their info, and then updates a UDF with this info.
 * A PowerShell script that daily queries the RMM UDF, parses the monitor information for each device, and updates ITG.
 
 ### How it works
@@ -70,5 +70,34 @@ The script will then go through any monitors found in ITG that were not found in
 3. Create/update the Config.ps1 file from Config.ps1.template. Note that this is the same config file that is used by the regular ITG to Datto RMM integration documented above. See Setup instructions above for configuration of variables, variables only used by this integration are documented below.
 4. Configure `$ITG_MonitorTypeID` with the configuration type ID of the **Monitor** configuration type. This is found in: `Account > Configuration Types`.
 5. Configure `$ITG_EOL_FlexibleAssetTypeID` with the flexible asset ID of the **End of Life** flexible asset type.
-6. Configure `$RMM_MonitorInfo_UDF` with the UDF # that you will your RMM component is updating.
+6. Configure `$RMM_MonitorInfo_UDF` with the UDF # that your RMM component is updating.
 7. Place the script (`DattoRMM_to_ITG_Monitors_Integration.ps1`) on a device that is always on and setup a task scheduler to run it. This should be ran sometime after the RMM component above has ran, I personally run it 1 hour after the components scheduled time.
+
+### End of Life - ITG flexible asset
+We have a flexible asset in ITG to track the end of life of devices and the Monitor integration uses this. You can disable this by setting `$ITG_EOL_FlexibleAssetTypeID` to `$false` in the config. If you wish to use this feature, here are the details for the flexible asset, so you can create it in ITG:
+* Name: End of Life
+* Description: The end of life for a specific configuration (or set of configurations).
+* Fields:
+  * Description
+    * Type: Text
+    * ✔ Required
+    * ✔ Show in List
+    * ✔ Use for Title
+    * Hint: A description for this asset, usually the device name or a description of the devices this applies to
+  * End of Life
+    * Type: Date
+    * ✔ Required
+    * ✔ Show in List
+    * ✔ Use for Title
+    * ✔ Expiration
+    * Hint: The end of life for this device or devices
+  * Configuration(s)
+    * Type: Tag - Configurations
+    * ✔ Show in List
+    * Hint: The configuration or configurations that this applies to
+  * Manufacturer / Model
+    * Type: Text
+    * ✔ Show in List
+    * Hint: Instead of listing specific configurations, this can relate to a specific Manufacturer and Model. Write the Man/Model exactly the same way as on the Configurations page
+  * Notes
+    * Type: Textbox

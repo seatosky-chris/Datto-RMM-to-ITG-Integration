@@ -34,7 +34,7 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 
 # Setup logging
 If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
-$logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-$(Get-date -f 'yyyyMMddHHmmss').txt";
+$logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_to_rmm-$(Get-date -f 'yyyyMMddHHmmss').txt";
 Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
 Write-PSFMessage -Level Verbose -Message "Starting device matching script."
 

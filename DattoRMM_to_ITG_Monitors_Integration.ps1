@@ -19,9 +19,20 @@
 
 . "$PSScriptRoot\Config.ps1" # Config
 
+###############################
+###### CONSTANTS ##############
 # A blacklist of bad monitor-specific serial numbers
 # To add custom ones, add to the $IgnoreSerials variable in Config.ps1
 $SNBlacklist = @(16843009, 16780800, 1513576258, "0000000000001", "VIZIO00001", "SerialNumber", "W1Zyywwnnnnn", "demoset-1")
+
+# The amount of years of manufacture to assume a monitor is under warranty
+# There is no functionality to get the actual warranty date of a monitor, that would be rather difficult,
+# Instead we assume each monitor is under warranty for X years and calculate it based on the year of manufacture
+$WarrantyYears = 3
+
+# The amount of years after the warranty has expired on a monitor to consider it EOL (End of Life)
+$EOLYears = 2
+###############################
 
 
 # Fixed SSL if necessary
@@ -654,7 +665,7 @@ function Get-WarrantyDate ($MonitorDetails) {
 			$WarrantyDate = $WarrantyDate.AddYears($YearOfManufacture - $WarrantyDate.Year)
 		}
 	}
-	$WarrantyDate = $WarrantyDate.AddYears(3)
+	$WarrantyDate = $WarrantyDate.AddYears($WarrantyYears)
 	$WarrantyDate = Get-Date $WarrantyDate -Format "yyyy-MM-dd"
 	return $WarrantyDate
 }
@@ -662,7 +673,7 @@ function Get-WarrantyDate ($MonitorDetails) {
 # This calculates the end of life date for a monitor based on a current warranty date
 function Get-EOLDate ($WarrantyDate) {
 	$EOLDate = Get-Date $WarrantyDate
-	$EOLDate = $EOLDate.AddYears(2)
+	$EOLDate = $EOLDate.AddYears($EOLYears)
 	$EOLDate = Get-Date $EOLDate -Format "yyyy-MM-dd"
 	return $EOLDate
 }

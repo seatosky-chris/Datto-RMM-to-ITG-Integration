@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Oct 31 2023
+# Last Modified: Fri Feb 16 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2024-02-16	CJ	Improved duplicate check for new network devices that may not have a SN or Mac address
 # 2024-02-16	CJ	Implemented configuration archiving
 # 2023-10-31	CJ	Implemented logging
 # 2023-10-27	CJ	Upgraded Get-RMMDeviceDetails function to support esxi hosts and printers
@@ -725,10 +726,18 @@ function Get-RelatedITGDevices ($RMMDevice) {
 	$ITGDevices = Get-ITGlueConfigurations -organization_id $OrgID -filter_name $DeviceName
 
 	if ($ITGDevices -and $ITGDevices.data -and ($ITGDevices.data | Measure-Object).Count -gt 0) {
-		$ITGDevices_Matched = $ITGDevices.data | Where-Object { $_.attributes.'serial-number' -or $_.attributes.'mac-address' }
-		$ITGDevices_Matched = $ITGDevices_Matched | Where-Object {
-			($_.attributes.'serial-number' -and $RMMDevice.serialNumber -and $_.attributes.'serial-number'.Trim() -like $RMMDevice.serialNumber.Trim()) -or
-			($_.attributes.'mac-address' -and $RMMDevice.Nics.macAddress -and $_.attributes.'mac-address'.Trim() -in $RMMDevice.Nics.macAddress)
+		if ($RMMDevice.snmpEnabled -and !$RMMDevice.serialNumber -and ($RMMDevice.Nics | Measure-Object).Count -eq 0) {
+			# Network device with no S/N or Mac Address, look for a simple IP match
+			$ITGDevices_Matched = $ITGDevices.data | Where-Object { $_.attributes.'primary-ip' }
+			$ITGDevices_Matched = $ITGDevices_Matched | Where-Object {
+				$_.attributes.'primary-ip' -and $RMMDevice.intIpAddress -and $_.attributes.'primary-ip'.Trim() -like $RMMDevice.intIpAddress.Trim()
+			}
+		} else {
+			$ITGDevices_Matched = $ITGDevices.data | Where-Object { $_.attributes.'serial-number' -or $_.attributes.'mac-address' }
+			$ITGDevices_Matched = $ITGDevices_Matched | Where-Object {
+				($_.attributes.'serial-number' -and $RMMDevice.serialNumber -and $_.attributes.'serial-number'.Trim() -like $RMMDevice.serialNumber.Trim()) -or
+				($_.attributes.'mac-address' -and $RMMDevice.Nics.macAddress -and $_.attributes.'mac-address'.Trim() -in $RMMDevice.Nics.macAddress)
+			}
 		}
 
 		if ($ITGDevices_Matched) {

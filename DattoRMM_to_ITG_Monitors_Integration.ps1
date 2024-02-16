@@ -1250,32 +1250,34 @@ function Update-ITGMonitor ($ITGMonitor, $MonitorDetails, $ITGManufacturerAndMod
 		if ($EnableEOL) {
 			$EOLAssets = Get-RelatedEOLAssets -ITGMonitor $ITGMonitor -EOLDate $EndOfLife -ITGManufacturerAndModel $ITGManufacturerAndModel
 
-			foreach ($EOLAsset in $EOLAssets) {
-				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
-					# Device is already part of the EOL Asset, skip it
-					continue 
-				}
+			if ($EOLAssets -and $EOLAssets.data -and ($EOLAssets.data | Measure-Object).count -gt 0) {
+				foreach ($EOLAsset in $EOLAssets.data) {
+					if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values -and $ITGMonitor.id -in $EOLAsset.attributes.traits.'configuration-s'.values.id) {
+						# Device is already part of the EOL Asset, skip it
+						continue 
+					}
 
-				if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
-					$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
-					$UpdatedConfigurations += $ITGMonitor.id
-					$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
-				}
-				$UpdatedEOLAsset = 
-				@{
-					type = 'flexible-assets'
-					attributes = @{
-						traits = @{
-							description = $EOLAsset.attributes.traits.description
-							"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
-							"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
-							"configuration-s" = @($UpdatedConfigurations)
-							notes = $EOLAsset.attributes.traits.notes
+					if ($EOLAsset.attributes.traits.'configuration-s' -and $EOLAsset.attributes.traits.'configuration-s'.values) {
+						$UpdatedConfigurations = @($EOLAsset.attributes.traits.'configuration-s'.values.id)
+						$UpdatedConfigurations += $ITGMonitor.id
+						$UpdatedConfigurations = $UpdatedConfigurations | Sort-Object -Unique
+					}
+					$UpdatedEOLAsset = 
+					@{
+						type = 'flexible-assets'
+						attributes = @{
+							traits = @{
+								description = $EOLAsset.attributes.traits.description
+								"end-of-life" = $EOLAsset.attributes.traits.'end-of-life'
+								"manufacturer-model" = $EOLAsset.attributes.traits.'manufacturer-model'
+								"configuration-s" = @($UpdatedConfigurations)
+								notes = $EOLAsset.attributes.traits.notes
+							}
 						}
 					}
+					$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
+					$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id}
 				}
-				$null = Set-ITGlueFlexibleAssets -id $EOLAsset.id -data $UpdatedEOLAsset
-				$EOLAsset.attributes.traits.'configuration-s'[0].values += [PSCustomObject]@{ id = $ITGMonitor.id}
 			}
 		}
 	}

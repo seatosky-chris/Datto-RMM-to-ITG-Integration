@@ -237,8 +237,24 @@ if ($ITG_Sites -and $ITG_Sites.data) {
 	}
 }
 
+# Function to convert imported UTC date/times to local time for easier comparisons
+function Convert-UTCtoLocal {
+	param( [parameter(Mandatory=$true)] [String] $UTCTime )
+	$TZ = [System.TimeZoneInfo]::Local
+	$LocalTime = [System.TimeZoneInfo]::ConvertTimeFromUtc($UTCTime, $TZ)
+	return $LocalTime
+}
+
 # Get RMM Devices for all organizations
 $RMM_Devices = Get-DrmmAccountDevices | Sort-Object -property @{Expression='sitename'; Ascending=$true}, @{Expression='description'; Ascending=$true} | Where-Object {$_.sitename -ne "Deleted Devices"}
+# Filter out SNMP devices added recently that may not have pulled all info yet
+$RMM_Devices = $RMM_Devices | Where-Object {
+	$CreationDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($_.creationDate));
+	$LastAuditDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($_.lastAuditDate));
+	!$_.snmpEnabled -or 
+	($_.snmpEnabled -and $_.online -and $CreationDate -lt (Get-Date).AddMinutes(-15) -and $LastAuditDate -lt (Get-Date).AddMinutes(-15)) -or
+	($_.snmpEnabled -and !$_.online -and $CreationDate -lt (Get-Date).AddDays(-1) -and $LastAuditDate -lt (Get-Date).AddMinutes(-15))
+}
 Write-PSFMessage -Level Verbose -Message "Grabbed $($RMM_Devices.count) RMM Devices."
 
 # The below function will add more details to the RMM device (serial number, manufacturer, model, etc)
@@ -599,14 +615,6 @@ function Get-ITGOperatingSystem {
 	}
 
 	return $ITGOperatingSystem
-}
-
-# Function to convert imported UTC date/times to local time for easier comparisons
-function Convert-UTCtoLocal {
-	param( [parameter(Mandatory=$true)] [String] $UTCTime )
-	$TZ = [System.TimeZoneInfo]::Local
-	$LocalTime = [System.TimeZoneInfo]::ConvertTimeFromUtc($UTCTime, $TZ)
-	return $LocalTime
 }
 
 function Format-ManufacturerName ($Manufacturer) {

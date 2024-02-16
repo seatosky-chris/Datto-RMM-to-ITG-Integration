@@ -4,7 +4,7 @@
 # Created Date: Tuesday, May 16th 2023, 3:59:48 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Oct 31 2023
+# Last Modified: Fri Feb 16 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -65,18 +65,18 @@ Set-DrmmApiParameters -Url $DattoAPIKey.URL -Key $DattoAPIKey.Key -SecretKey $Da
 $MonitorUDF = "udf$($RMM_MonitorInfo_UDF)"
 
 # Get auxilary ITG data
-$ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
+$global:ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
 
-$ITGModels = Get-ITGlueModels -page_size "1000"
+$global:ITGModels = Get-ITGlueModels -page_size "1000"
 $i = 1
-while ($ITGModels.links.next) {
+while ($global:ITGModels.links.next) {
 	$i++
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
-	$ITGModels.data += $Models_Next.data
-	$ITGModels.links = $Models_Next.links
+	$global:ITGModels.data += $Models_Next.data
+	$global:ITGModels.links = $Models_Next.links
 }
-$ITGModels = $ITGModels.data
-Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers and $($ITGModels.count) models."
+$global:ITGModels = $global:ITGModels.data
+Write-PSFMessage -Level Verbose -Message "Grabbed $($global:ITGManufacturers.count) manufacturers and $($global:ITGModels.count) models."
 
 # Loop through all RMM companies and match to related ITG company
 $RMM_Sites = Get-DrmmAccountSites | Sort-Object -Property Name
@@ -474,20 +474,25 @@ function Get-ITGManufacturerAndModel ($Monitor) {
 		$ITGModel = $false
 
 		if ($Model) {
-			$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
+			$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
 			if (!$ITGModel) {
-				$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Monitor.Manufacturer.Trim() }
+				$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Monitor.Manufacturer.Trim() }
 				if ($ITGModel) {
 					$Manufacturer = $Monitor.Manufacturer.Trim()
 				}
 			}
+			if (!$ITGModel -and $Model -like "$($Manufacturer)*") {
+				$Model = $Model -replace "$($Manufacturer)", ""
+				$Model = $Model.Trim()
+				$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
+			}
 			if (!$ITGModel) {
-				$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like ($Monitor.Model.Trim()) -and $_.attributes.'manufacturer-name' -like $Manufacturer }
+				$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like ($Monitor.Model.Trim()) -and $_.attributes.'manufacturer-name' -like $Manufacturer }
 				if ($ITGModel) {
 					$Model = $Monitor.Model.Trim()
 				}
 				if (!$ITGModel) {
-					$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like ($Monitor.Model.Trim()) -and $_.attributes.'manufacturer-name' -like $Monitor.Manufacturer.Trim() }
+					$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like ($Monitor.Model.Trim()) -and $_.attributes.'manufacturer-name' -like $Monitor.Manufacturer.Trim() }
 					if ($ITGModel) {
 						$Model = $Monitor.Model.Trim()
 						$Manufacturer = $Monitor.Manufacturer.Trim()
@@ -504,10 +509,10 @@ function Get-ITGManufacturerAndModel ($Monitor) {
 		}
 
 		if ($ITGModel -and $ITGModel.attributes.'manufacturer-id') {
-			$ITGManufacturer = $ITGManufacturers | Where-Object { $_.id -eq $ITGModel.attributes.'manufacturer-id' }
+			$ITGManufacturer = $global:ITGManufacturers | Where-Object { $_.id -eq $ITGModel.attributes.'manufacturer-id' }
 		}
 		if (!$ITGManufacturer) {
-			$ITGManufacturer = $ITGManufacturers | Where-Object { $_.attributes.name -like $Manufacturer }
+			$ITGManufacturer = $global:ITGManufacturers | Where-Object { $_.attributes.name -like $Manufacturer }
 		}
 
 		if (($ITGManufacturer | Measure-Object).Count -gt 1 -and ($ITGManufacturer | Where-Object { $_.attributes.name -ceq $Manufacturer } | Measure-Object).Count -gt 0) {

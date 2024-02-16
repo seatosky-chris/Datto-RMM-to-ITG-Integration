@@ -148,19 +148,20 @@ if ($UpdatedConfig) {
 }
 
 # Get auxilary ITG data
-$ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
+$global:ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
 $ITGOperatingSystems = (Get-ITGlueOperatingSystems -page_size 1000).data
 
-$ITGModels = Get-ITGlueModels -page_size "1000"
+$global:ITGModels = Get-ITGlueModels -page_size "1000"
 $i = 1
-while ($ITGModels.links.next) {
+while ($global:ITGModels.links.next) {
 	$i++
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
-	$ITGModels.data += $Models_Next.data
-	$ITGModels.links = $Models_Next.links
+	$global:ITGModels.data += $Models_Next.data
+	$global:ITGModels.links = $Models_Next.links
+	Start-Sleep -Seconds 1
 }
-$ITGModels = $ITGModels.data
-Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers, $($ITGModels.count) models, and $($ITGOperatingSystems.count) OS's from ITG."
+$global:ITGModels = $global:ITGModels.data
+Write-PSFMessage -Level Verbose -Message "Grabbed $($global:ITGManufacturers.count) manufacturers, $($global:ITGModels.count) models, and $($ITGOperatingSystems.count) OS's from ITG."
 
 $ITGPasswords = @{} # We'll grab these later if we need them
 
@@ -645,12 +646,17 @@ function Get-ITGManufacturerAndModel ($RMMDevice) {
 		$ITGModel = $false
 
 		if ($Model) {
-			$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
+			$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
 			if (!$ITGModel) {
-				$ITGModel = $ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $RMMDevice.manufacturer.Trim() }
+				$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $RMMDevice.manufacturer.Trim() }
 				if ($ITGModel) {
 					$Manufacturer = $RMMDevice.manufacturer.Trim()
 				}
+			}
+			if (!$ITGModel -and $Model -like "$($Manufacturer)*") {
+				$Model = $Model -replace "$($Manufacturer)", ""
+				$Model = $Model.Trim()
+				$ITGModel = $global:ITGModels | Where-Object { $_.attributes.name -like $Model -and $_.attributes.'manufacturer-name' -like $Manufacturer }
 			}
 
 			if (($ITGModel | Measure-Object).Count -gt 1 -and ($ITGModel | Where-Object { $_.attributes.name -ceq $Model } | Measure-Object).Count -gt 0) {
@@ -662,10 +668,10 @@ function Get-ITGManufacturerAndModel ($RMMDevice) {
 		}
 
 		if ($ITGModel -and $ITGModel.attributes.'manufacturer-id') {
-			$ITGManufacturer = $ITGManufacturers | Where-Object { $_.id -eq $ITGModel.attributes.'manufacturer-id' }
+			$ITGManufacturer = $global:ITGManufacturers | Where-Object { $_.id -eq $ITGModel.attributes.'manufacturer-id' }
 		}
 		if (!$ITGManufacturer) {
-			$ITGManufacturer = $ITGManufacturers | Where-Object { $_.attributes.name -like $Manufacturer }
+			$ITGManufacturer = $global:ITGManufacturers | Where-Object { $_.attributes.name -like $Manufacturer }
 		}
 
 		if (($ITGManufacturer | Measure-Object).Count -gt 1 -and ($ITGManufacturer | Where-Object { $_.attributes.name -ceq $Manufacturer } | Measure-Object).Count -gt 0) {
@@ -778,6 +784,7 @@ function Get-RelatedITGPasswords ($RMMDevice) {
 			$Passwords_Next = Get-ITGluePasswords -page_size 1000 -page_number $i -organization_id $OrgID
 			$ITGPasswords_ForOrg.data += $Passwords_Next.data
 			$ITGPasswords_ForOrg.links = $Passwords_Next.links
+			Start-Sleep -Seconds 1
 		}
 		if ($ITGPasswords_ForOrg -and $ITGPasswords_ForOrg.data) {
 			$ITGPasswords.$OrgID = $ITGPasswords_ForOrg.data
@@ -1000,7 +1007,7 @@ if ($null -eq $MostRecent){
 	if (($PreviousDevices | Measure-Object).Count -gt 1) {
 		# First, lets look for deletions.
 		Write-host "`nLooking for deleted devices...`n"
-		Write-PSFMessage -Level Verbose -Message "`nLooking for deleted devices...`n"
+		Write-PSFMessage -Level Verbose -Message "Looking for deleted devices..."
 		foreach ($PrevDevice in $PreviousDevices) {
 			if ($RMM_Devices.uid -notcontains $PrevDevice.uid){
 				write-host "Device $($PrevDevice.hostname) deleted from $($PrevDevice.siteName)."
@@ -1025,12 +1032,12 @@ if ($null -eq $MostRecent){
 			}
 		} else {
 			write-host "`nNo deleted devices found in Datto RMM."
-			Write-PSFMessage -Level Verbose -Message "`nNo deleted devices found in Datto RMM."
+			Write-PSFMessage -Level Verbose -Message "No deleted devices found in Datto RMM."
 		}
 
 		# Next, lets look for new devices.
 		Write-host "`nLooking for new devices...`n"
-		Write-PSFMessage -Level Verbose -Message "`nLooking for new devices...`n"
+		Write-PSFMessage -Level Verbose -Message "Looking for new devices..."
 		foreach ($CurDevice in $RMM_Devices) {
 			if ($PreviousDevices.uid -notcontains $CurDevice.uid){
 				Write-host "Found new device $($CurDevice.hostname) for $($CurDevice.siteName)."
@@ -1053,7 +1060,7 @@ if ($null -eq $MostRecent){
 			}
 		} else {
 			Write-host "`nNo new devices have been added to Datto RMM."
-			Write-PSFMessage -Level Verbose -Message "`nNo new devices have been added to Datto RMM."
+			Write-PSFMessage -Level Verbose -Message "No new devices have been added to Datto RMM."
 		}
 
 		# Cleanup old DeviceLists
@@ -1088,6 +1095,7 @@ if ($ITGArchiveDevices -and ($ITGArchiveDevices | Measure-Object).Count -gt 0) {
 			$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
 			$ITG_OrgDevices.data += $Devices_Next.data
 			$ITG_OrgDevices.links = $Devices_Next.links
+			Start-Sleep -Seconds 1
 		}
 		
 		if (($ITG_OrgDevices.data | Measure-Object).Count -lt 1 -and $ITG_OrgDevices.meta.'total-count' -lt 1) {
@@ -1194,6 +1202,7 @@ if ($FullCheck) {
 			$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
 			$ITG_OrgDevices.data += $Devices_Next.data
 			$ITG_OrgDevices.links = $Devices_Next.links
+			Start-Sleep -Seconds 1
 		}
 		Write-PSFMessage -Level Verbose -Message "Found $(($ITG_OrgDevices.data | Measure-Object).Count) ITG devices. (Total Count: $($ITG_OrgDevices.meta.'total-count'))"
 		if (($ITG_OrgDevices.data | Measure-Object).Count -lt 1 -and $ITG_OrgDevices.meta.'total-count' -lt 1) {

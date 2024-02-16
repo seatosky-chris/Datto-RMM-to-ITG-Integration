@@ -22,7 +22,7 @@
 
 param(
 	$FullCheck = $false,
-	$StepThroughUpdates = $true
+	$StepThroughUpdates = $false
 )
 
 . "$PSScriptRoot\Config.ps1" # Config

@@ -766,7 +766,10 @@ function Get-RelatedITGPasswords ($RMMDevice) {
 	}
 
 	if ($ITGPasswords.$OrgID) {
-		$RelatedPasswords = $ITGPasswords.$OrgID | Where-Object { $_.attributes.name -like "*$($RMMDevice.hostname)*" -or $_.attributes.name -like "*$($RMMDevice.description)*" }
+		$RelatedPasswords = $ITGPasswords.$OrgID | Where-Object { ($RMMDevice.hostname -and $_.attributes.name -like "*$($RMMDevice.hostname)*") -or ($RMMDevice.description -and $_.attributes.name -like "*$($RMMDevice.description)*") }
+		if (($RelatedPasswords | Measure-Object).Count -gt 10) {
+			$RelatedPasswords = $RelatedPasswords | Select-Object -First 10
+		}
 		return $RelatedPasswords
 	}
 

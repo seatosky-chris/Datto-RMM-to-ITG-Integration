@@ -4,7 +4,7 @@
 # Created Date: Tuesday, November 15th 2022, 10:13:02 am
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Oct 31 2023
+# Last Modified: Fri Feb 16 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -53,6 +53,7 @@ while ($ITGModels.links.next) {
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
 	$ITGModels.data += $Models_Next.data
 	$ITGModels.links = $Models_Next.links
+	Start-Sleep -Seconds 1
 }
 $ITGModels = $ITGModels.data
 
@@ -63,6 +64,7 @@ while ($ITG_OrgDevices.links.next) {
 	$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i
 	$ITG_OrgDevices.data += $Devices_Next.data
 	$ITG_OrgDevices.links = $Devices_Next.links
+	Start-Sleep -Seconds 1
 }
 $ITG_OrgDevices = $ITG_OrgDevices.data
 Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers, $($ITGModels.count) models, and $($ITG_OrgDevices.count) configurations from ITG."

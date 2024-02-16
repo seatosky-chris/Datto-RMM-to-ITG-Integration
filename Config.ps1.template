@@ -84,6 +84,13 @@ $ITG_ConfigTypeIDs = @{
 	Other = 19 # Network Device
 }
 
+####################
+# $DeviceTypes_PreventDeletion
+#
+# These are device types (from RMM) that we won't archive in ITG
+#
+$DeviceTypes_PreventDeletion = @("Laptop", "Desktop", "Server")
+
 
 
 ##################################################################################################################

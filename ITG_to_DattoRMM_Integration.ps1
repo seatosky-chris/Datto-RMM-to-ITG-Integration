@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2024-02-16	CJ	Implemented configuration archiving
 # 2023-10-31	CJ	Implemented logging
 # 2023-10-27	CJ	Upgraded Get-RMMDeviceDetails function to support esxi hosts and printers
 ###
@@ -923,9 +924,28 @@ function New-ITGDevice ($RMMDevice)
 	}
 }
 
+# This function will archive a device in
+function Archive-ITGDevice ($ITG_Device_ID) {
+	$UpdatedConfig = @{
+		'type' = 'configurations'
+		'attributes' = @{
+			'archived' = 'true'
+		}
+	}
+
+	try {
+		Set-ITGlueConfigurations -id $ITG_Device_ID -data $UpdatedConfig
+		return $true
+	} catch {
+		Write-Error "Could not archive ITG configuration '$ITG_Device_ID' for the reason: " + $_.Exception.Message
+		return $false
+	}
+}
+
 # Loop through devices and find any which have been added or deleted since the last time the script was executed
 $NewDevices = [System.Collections.ArrayList]@()
 $DeletedDevices = [System.Collections.ArrayList]@()
+$ITGArchiveDevices = [System.Collections.ArrayList]@()
 
 $path = "$PSScriptRoot\DeviceTracking"
 If(!(test-path -PathType container $path))
@@ -971,7 +991,16 @@ if ($null -eq $MostRecent){
 			Write-Host "Saved deleted devices to DeviceTracking\DattoRMMDeviceDeletions-<date stamp>.csv"
 			Write-PSFMessage -Level Verbose -Message "Saved deleted devices to DeviceTracking\DattoRMMDeviceDeletions-<date stamp>.csv"
 
-			# TODO: Archive $DeletedDevices in ITG (handle in Device Audit?)
+			# Mark devices for archival in ITG
+			if ($DeletedDevices.Count -lt 100) { # For safety, if there is an issue we dont want to delete a bunch of duplicates
+				foreach ($DeleteDevice in $DeletedDevices) {
+					if (!$DeviceTypes_PreventDeletion -or $DeleteDevice.deviceType.category -notin $DeviceTypes_PreventDeletion) {
+						[void]$ITGArchiveDevices.Add($DeleteDevice)
+					}
+				}
+			} else {
+				Write-PSFMessage -Level Warning -Message "Did not archive deleted devices because >100 were found to add. See DattoRMMDeviceDeletions-$(get-date -format yyyy-MM-dd-HHmm).csv"
+			}
 		} else {
 			write-host "`nNo deleted devices found in Datto RMM."
 			Write-PSFMessage -Level Verbose -Message "`nNo deleted devices found in Datto RMM."
@@ -1014,6 +1043,90 @@ if ($null -eq $MostRecent){
 		}
 	} else {
 		$FullCheck = $true
+	}
+}
+
+# Archive ITG devices if necessary
+if ($ITGArchiveDevices -and ($ITGArchiveDevices | Measure-Object).Count -gt 0) {
+	$ArchiveSites = $ITGArchiveDevices.siteId | Sort-Object -Unique
+	foreach ($ArchiveSite in $ArchiveSites) {
+		$RMMSiteID = $ArchiveSite
+		$RMMSite = $RMM_Sites | Where-Object { $_.id -eq $RMMSiteID }
+		$ITGSite = $MatchedSites.[int]$ArchiveSite
+
+		if (!$ITGSite) { continue }
+
+		$SiteArchiveDevices = $ITGArchiveDevices | Where-Object { $_.siteId -eq $RMMSiteID }
+
+		# Get ITG devices for org
+		$ITG_OrgDevices = Get-ITGlueConfigurations -page_size "1000" -organization_id $ITGSite.id
+		$i = 1
+		while ($ITG_OrgDevices.links.next) {
+			$i++
+			$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
+			$ITG_OrgDevices.data += $Devices_Next.data
+			$ITG_OrgDevices.links = $Devices_Next.links
+		}
+		
+		if (($ITG_OrgDevices.data | Measure-Object).Count -lt 1 -and $ITG_OrgDevices.meta.'total-count' -lt 1) {
+			continue
+		}
+		$ITG_OrgDevices = $ITG_OrgDevices.data
+
+		# Loop through Archive devices, find match in ITG, and archive
+		foreach ($RMMDevice in $SiteArchiveDevices) {
+			# RMM to ITG device match
+			$ITGDevice = $ITG_OrgDevices | Where-Object { 
+				$Return = $false
+				if ($_.attributes."installed-by") {
+					$Return = $_.attributes."installed-by".Trim() -eq ("RMM: " + $RMMDevice.uid)
+				}
+				if ($RMMDevice.hostname -and !$Return) {
+					$Return = $_.attributes.name.Trim() -eq $RMMDevice.hostname.Trim()
+				}
+				if ($RMMDevice.description -and !$Return) {
+					$Return = $_.attributes.name.Trim() -like $RMMDevice.description.Trim()
+				}
+
+				if ($_.attributes.hostname -and !$Return) {
+					if ($RMMDevice.hostname -and !$Return) {
+						$Return = $_.attributes.hostname.Trim() -eq $RMMDevice.hostname.Trim()
+					}
+					if ($RMMDevice.description -and !$Return) {
+						$Return = $_.attributes.hostname.Trim() -like $RMMDevice.description.Trim()
+					}
+				}
+
+				return $Return
+			}
+
+			# Narrow down if more than 1 device found
+			if (($ITGDevice | Measure-Object).Count -gt 1) {
+				$ITGDevice_Temp = $ITGDevice | Where-Object {
+					$_.attributes."installed-by" -and $_.attributes."installed-by".Trim() -eq ("RMM: " + $RMMDevice.uid)
+				}
+				if (($ITGDevice_Temp | Measure-Object).Count -gt 0) {
+					$ITGDevice = $ITGDevice_Temp
+				}
+			}
+			if (($ITGDevice | Measure-Object).Count -gt 1) {
+				$ITGDevice_Temp = $ITGDevice | Where-Object {
+					!$_.attributes.archived
+				}
+				if (($ITGDevice_Temp | Measure-Object).Count -gt 0) {
+					$ITGDevice = $ITGDevice_Temp
+				}
+			}
+			if (($ITGDevice | Measure-Object).Count -gt 1) {
+				$ITGDevice = $ITGDevice | Select-Object -First 1
+			}
+
+			if ($ITGDevice) {
+				# Match found, archive device
+				Archive-ITGDevice -ITG_Device_ID $ITGDevice.id
+				Write-PSFMessage -Level Verbose -Message "Archived ITG Device ID $($ITGDevice.id) (Name: $($ITGDevice.id) Type: $($ITGDevice.attributes.'configuration-type-name') Org: $($ITGDevice.attributes.'organization-name'))."
+			}
+		}
 	}
 }
 

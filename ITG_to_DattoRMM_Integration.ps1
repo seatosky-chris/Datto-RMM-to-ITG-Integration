@@ -714,7 +714,9 @@ function Get-RelatedITGDevices ($RMMDevice) {
 	Get-RMMDeviceDetails -Device $RMMDevice
 
 	if (!$RMMDevice.serialNumber -and !$RMMDevice.Nics.macAddress) {
-		return $false
+		if (!$RMMDevice.snmpEnabled -or !$RMMDevice.intIpAddress) {
+			return $false
+		}
 	}
 
 	$DeviceName = $RMMDevice.hostname.Trim()

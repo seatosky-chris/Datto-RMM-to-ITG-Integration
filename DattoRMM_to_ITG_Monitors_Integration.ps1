@@ -535,8 +535,18 @@ function Get-ITGManufacturerAndModel ($Monitor) {
 					"manufacturer-id" = $ITGManufacturer.id
 				}
 			}
-			$ITGModel = $ITGModel.data
-			$global:ITGModels += $ITGModel
+			if ($ITGModel -and $ITGModel.data) {
+				$ITGModel = $ITGModel.data
+				try {
+					$global:ITGModels += $ITGModel
+				} catch {
+					Write-PSFMessage -Level Warning -Message "Failed to add new model ($($ITGManufacturer.attributes.name) | $Model) to `$ITGModels."
+					Write-PSFMessage -Level Warning -Message $_.Exception.Message
+					Write-PSFMessage -Level Warning -Message $_
+					Write-PSFMessage -Level Warning -Message "`ITGModels Type - $($global:ITGModels.GetType())"
+					Write-PSFMessage -Level Warning -Message "`ITGModels Count - $($global:ITGModels.Count)"
+				}
+			}
 		}
 
 		return @{
@@ -821,6 +831,7 @@ function Get-RelatedEOLAssets ($ITGMonitor, $EOLDate, $ITGManufacturerAndModel =
 			} else {
 				# This is the only device in the EOL asset, remove the entire EOL asset
 				Remove-ITGlueFlexibleAssets -id $Remove_EOLAsset.id -Confirm:$False
+				Write-PSFMessage -Level Verbose -Message "Removed EOL Asset: $($Remove_EOLAsset.id) ($($Remove_EOLAsset.attributes.name))"
 			}
 		}
 	}

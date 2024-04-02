@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Fri Feb 16 2024
+# Last Modified: Tue Apr 02 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2024-04-02	CJ	Fixing constant archival of new SNMP devices
 # 2024-02-16	CJ	Improved duplicate check for new network devices that may not have a SN or Mac address
 # 2024-02-16	CJ	Implemented configuration archiving
 # 2023-10-31	CJ	Implemented logging
@@ -248,13 +249,19 @@ function Convert-UTCtoLocal {
 
 # Get RMM Devices for all organizations
 $RMM_Devices = Get-DrmmAccountDevices | Sort-Object -property @{Expression='sitename'; Ascending=$true}, @{Expression='description'; Ascending=$true} | Where-Object {$_.sitename -ne "Deleted Devices"}
-# Filter out SNMP devices added recently that may not have pulled all info yet
-$RMM_Devices = $RMM_Devices | Where-Object {
+
+# Get a list of SNMP devices added recently that may not have pulled all info yet
+$RMM_Devices_RecentlyAuditedSNMP = $RMM_Devices | Where-Object {
 	$CreationDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($_.creationDate));
 	$LastAuditDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($_.lastAuditDate));
-	!$_.snmpEnabled -or 
-	($_.snmpEnabled -and $_.online -and $CreationDate -lt (Get-Date).AddMinutes(-15) -and $LastAuditDate -lt (Get-Date).AddMinutes(-15)) -or
-	($_.snmpEnabled -and !$_.online -and $CreationDate -lt (Get-Date).AddDays(-1) -and $LastAuditDate -lt (Get-Date).AddMinutes(-15))
+	$_.snmpEnabled -and
+	(($_.online -and $CreationDate -gt (Get-Date).AddMinutes(-15)) -or
+	((!$_.online -or $LastAuditDate -lt $CreationDate.AddMinutes(15)) -and $CreationDate -gt (Get-Date).AddDays(-1)))
+}
+if ($RMM_Devices_RecentlyAuditedSNMP) {
+	$RMM_Devices_RecentlyAuditedSNMP = @($RMM_Devices_RecentlyAuditedSNMP.uid)
+} else {
+	$RMM_Devices_RecentlyAuditedSNMP = @()
 }
 Write-PSFMessage -Level Verbose -Message "Grabbed $($RMM_Devices.count) RMM Devices."
 
@@ -810,6 +817,9 @@ function New-ITGDevice ($RMMDevice)
 	}
 	if ($RMMDevice.siteId -notin $MatchedSites.Keys) {
 		return;
+	}
+	if ($RMMDevice.uid -in $RMM_Devices_RecentlyAuditedSNMP) {
+		 return;
 	}
 
 	$ConfigType = $false;

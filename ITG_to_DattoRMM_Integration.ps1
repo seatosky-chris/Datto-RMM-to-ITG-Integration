@@ -865,7 +865,7 @@ function New-ITGDevice ($RMMDevice)
 				$UpdatedConfig = @{
 					'type' = 'configurations'
 					'attributes' = @{
-						'archived' = 'true'
+						'archived' = 'false'
 					}
 				}
 				Set-ITGlueConfigurations -id $RelatedDevice.id -data $UpdatedConfig
@@ -1453,6 +1453,10 @@ if ($FullCheck) {
 					$UpdatedITGDevice."asset-tag" = $AssetTag
 					$UpdateRequired = $true
 				}
+			}
+			if ($ITGDevice.attributes.archived) {
+				$UpdatedITGDevice.'archived' = 'false'
+				$UpdateRequired = $true
 			}
 
 			# Update

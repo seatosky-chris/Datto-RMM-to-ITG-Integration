@@ -4,7 +4,7 @@
 # Created Date: Tuesday, May 16th 2023, 3:59:48 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Fri Feb 16 2024
+# Last Modified: Tue May 28 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -65,24 +65,53 @@ Set-DrmmApiParameters -Url $DattoAPIKey.URL -Key $DattoAPIKey.Key -SecretKey $Da
 $MonitorUDF = "udf$($RMM_MonitorInfo_UDF)"
 
 # Get auxilary ITG data
-$global:ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
+$global:ITGManufacturers = Get-ITGlueManufacturers -page_size 1000
+if (!$global:ITGManufacturers -or $global:ITGManufacturers.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing manufacturers from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $global:ITGManufacturers.Error
+	exit 1
+}
+$global:ITGManufacturers = ($global:ITGManufacturers).data
 
 $global:ITGModels = Get-ITGlueModels -page_size "1000"
 $i = 1
 while ($global:ITGModels.links.next) {
 	$i++
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+	if (!$Models_Next -or $Models_Next.Error) {
+		# We got an error querying models, wait and try again
+		Start-Sleep -Seconds 2
+		$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+
+		if (!$Models_Next -or $Models_Next.Error) {
+			Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing models from ITG. Exiting..."
+			Write-PSFMessage -Level Error -Message $Models_Next.Error
+			exit 1
+		}
+	}
 	$global:ITGModels.data += $Models_Next.data
 	$global:ITGModels.links = $Models_Next.links
+	Start-Sleep -Seconds 1
 }
 $global:ITGModels = $global:ITGModels.data
 Write-PSFMessage -Level Verbose -Message "Grabbed $($global:ITGManufacturers.count) manufacturers and $($global:ITGModels.count) models."
+
+if (!$global:ITGModels -or !$global:ITGManufacturers) {
+	Write-PSFMessage -Level Error -Message "There were issues getting the Models and Manufacturers from ITG. Exiting..."
+	exit 1
+}
 
 # Loop through all RMM companies and match to related ITG company
 $RMM_Sites = Get-DrmmAccountSites | Sort-Object -Property Name
 $ITG_Sites = Get-ITGlueOrganizations -page_size 1000
 $MatchedSites = @{}
 Write-PSFMessage -Level Verbose -Message "Found $($RMM_Sites.count) RMM Sites and $($ITG_Sites.count) ITG Sites."
+
+if (!$ITG_Sites -or $ITG_Sites.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing organizations from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $ITG_Sites.Error
+	exit 1
+}
 
 if ($ITG_Sites -and $ITG_Sites.data) {
 	foreach ($RMMSite in $RMM_Sites) {
@@ -172,6 +201,17 @@ $i = 1
 while ($ITG_Monitors.links.next) {
 	$i++
 	$Configurations_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_configuration_type_id $ITG_MonitorTypeID -include configuration_interfaces
+	if (!$Configurations_Next -or $Configurations_Next.Error) {
+		# We got an error querying configurations, wait and try again
+		Start-Sleep -Seconds 2
+		$Configurations_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_configuration_type_id $ITG_MonitorTypeID -include configuration_interfaces
+
+		if (!$Configurations_Next -or $Configurations_Next.Error) {
+			Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing configurations from ITG. Exiting..."
+			Write-PSFMessage -Level Error -Message $Configurations_Next.Error
+			exit 1
+		}
+	}
 	$ITG_Monitors.data += $Configurations_Next.data
 	$ITG_Monitors.links = $Configurations_Next.links
 }
@@ -197,6 +237,17 @@ if ($ITG_EOL_FlexibleAssetTypeID) {
 	while ($ITG_MonitorEOLs.links.next) {
 		$i++
 		$Monitors_Next = Get-ITGlueFlexibleAssets -page_size "1000" -page_number $i -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
+		if (!$Monitors_Next -or $Monitors_Next.Error) {
+			# We got an error querying eol assets, wait and try again
+			Start-Sleep -Seconds 2
+			$Monitors_Next = Get-ITGlueFlexibleAssets -page_size "1000" -page_number $i -filter_flexible_asset_type_id $ITG_EOL_FlexibleAssetTypeID
+	
+			if (!$Monitors_Next -or $Monitors_Next.Error) {
+				Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing monitor eol assets from ITG. Exiting..."
+				Write-PSFMessage -Level Error -Message $Monitors_Next.Error
+				exit 1
+			}
+		}
 		$ITG_MonitorEOLs.data += $Monitors_Next.data
 		$ITG_MonitorEOLs.links = $Monitors_Next.links
 	}

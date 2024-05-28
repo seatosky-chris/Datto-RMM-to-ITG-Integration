@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Apr 02 2024
+# Last Modified: Tue May 28 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -149,20 +149,50 @@ if ($UpdatedConfig) {
 }
 
 # Get auxilary ITG data
-$global:ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
-$ITGOperatingSystems = (Get-ITGlueOperatingSystems -page_size 1000).data
+$global:ITGManufacturers = Get-ITGlueManufacturers -page_size 1000
+if (!$global:ITGManufacturers -or $global:ITGManufacturers.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing manufacturers from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $global:ITGManufacturers.Error
+	exit 1
+}
+$global:ITGManufacturers = ($global:ITGManufacturers).data
+
+$ITGOperatingSystems = Get-ITGlueOperatingSystems -page_size 1000
+if (!$ITGOperatingSystems -or $ITGOperatingSystems.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing operating systems from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $ITGOperatingSystems.Error
+	exit 1
+}
+$ITGOperatingSystems = ($ITGOperatingSystems).data
 
 $global:ITGModels = Get-ITGlueModels -page_size "1000"
 $i = 1
 while ($global:ITGModels.links.next) {
 	$i++
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+	if (!$Models_Next -or $Models_Next.Error) {
+		# We got an error querying models, wait and try again
+		Start-Sleep -Seconds 2
+		$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+
+		if (!$Models_Next -or $Models_Next.Error) {
+			Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing models from ITG. Exiting..."
+			Write-PSFMessage -Level Error -Message $Models_Next.Error
+			exit 1
+		}
+	}
 	$global:ITGModels.data += $Models_Next.data
 	$global:ITGModels.links = $Models_Next.links
 	Start-Sleep -Seconds 1
 }
 $global:ITGModels = $global:ITGModels.data
+
 Write-PSFMessage -Level Verbose -Message "Grabbed $($global:ITGManufacturers.count) manufacturers, $($global:ITGModels.count) models, and $($ITGOperatingSystems.count) OS's from ITG."
+
+if (!$global:ITGModels -or !$global:ITGManufacturers -or !$ITGOperatingSystems) {
+	Write-PSFMessage -Level Error -Message "There were issues getting the Models, Manufacturers, and Operating Systems from ITG. Exiting..."
+	exit 1
+}
 
 $ITGPasswords = @{} # We'll grab these later if we need them
 
@@ -185,6 +215,12 @@ $RMM_Sites = Get-DrmmAccountSites | Sort-Object -Property Name
 $ITG_Sites = Get-ITGlueOrganizations -page_size 1000
 $MatchedSites = @{}
 Write-PSFMessage -Level Verbose -Message "Found $($RMM_Sites.count) RMM Sites and $($ITG_Sites.count) ITG Sites."
+
+if (!$ITG_Sites -or $ITG_Sites.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing organizations from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $ITG_Sites.Error
+	exit 1
+}
 
 if ($ITG_Sites -and $ITG_Sites.data) {
 	foreach ($RMMSite in $RMM_Sites) {
@@ -789,6 +825,16 @@ function Get-RelatedITGPasswords ($RMMDevice) {
 		while ($ITGPasswords_ForOrg.links.next) {
 			$i++
 			$Passwords_Next = Get-ITGluePasswords -page_size 1000 -page_number $i -organization_id $OrgID
+			if (!$Passwords_Next -or $Passwords_Next.Error) {
+				# We got an error querying passwords, wait and try again
+				Start-Sleep -Seconds 2
+				$Passwords_Next = Get-ITGluePasswords -page_size 1000 -page_number $i -organization_id $OrgID
+		
+				if (!$Passwords_Next -or $Passwords_Next.Error) {
+					Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing passwords from ITG."
+					Write-PSFMessage -Level Error -Message $Passwords_Next.Error
+				}
+			}
 			$ITGPasswords_ForOrg.data += $Passwords_Next.data
 			$ITGPasswords_ForOrg.links = $Passwords_Next.links
 			Start-Sleep -Seconds 1
@@ -976,7 +1022,7 @@ function Archive-ITGDevice ($ITG_Device_ID) {
 		Set-ITGlueConfigurations -id $ITG_Device_ID -data $UpdatedConfig
 		return $true
 	} catch {
-		Write-Error "Could not archive ITG configuration '$ITG_Device_ID' for the reason: " + $_.Exception.Message
+		Write-PSFMessage -Level Error -Message "Could not archive ITG configuration '$ITG_Device_ID' for the reason: " + $_.Exception.Message
 		return $false
 	}
 }
@@ -1103,6 +1149,16 @@ if ($ITGArchiveDevices -and ($ITGArchiveDevices | Measure-Object).Count -gt 0) {
 		while ($ITG_OrgDevices.links.next) {
 			$i++
 			$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
+			if (!$Devices_Next -or $Devices_Next.Error) {
+				# We got an error querying configurations, wait and try again
+				Start-Sleep -Seconds 2
+				$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
+		
+				if (!$Devices_Next -or $Devices_Next.Error) {
+					Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing configurations from ITG."
+					Write-PSFMessage -Level Error -Message $Devices_Next.Error
+				}
+			}
 			$ITG_OrgDevices.data += $Devices_Next.data
 			$ITG_OrgDevices.links = $Devices_Next.links
 			Start-Sleep -Seconds 1
@@ -1210,6 +1266,16 @@ if ($FullCheck) {
 		while ($ITG_OrgDevices.links.next) {
 			$i++
 			$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
+			if (!$Devices_Next -or $Devices_Next.Error) {
+				# We got an error querying configurations, wait and try again
+				Start-Sleep -Seconds 2
+				$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -organization_id $ITGSite.id
+		
+				if (!$Devices_Next -or $Devices_Next.Error) {
+					Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing configurations from ITG."
+					Write-PSFMessage -Level Error -Message $Devices_Next.Error
+				}
+			}
 			$ITG_OrgDevices.data += $Devices_Next.data
 			$ITG_OrgDevices.links = $Devices_Next.links
 			Start-Sleep -Seconds 1

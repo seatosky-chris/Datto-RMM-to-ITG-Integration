@@ -4,7 +4,7 @@
 # Created Date: Tuesday, November 15th 2022, 10:13:02 am
 # Author: Chris Jantzen
 # -----
-# Last Modified: Fri Feb 16 2024
+# Last Modified: Tue May 28 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -44,13 +44,30 @@ if ($ITGAPIKey.Key) {
 }
 
 # Get ITG data
-$ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
+$ITGManufacturers = Get-ITGlueManufacturers -page_size 1000
+if (!$ITGManufacturers -or $ITGManufacturers.Error) {
+	Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing manufacturers from ITG. Exiting..."
+	Write-PSFMessage -Level Error -Message $ITGManufacturers.Error
+	exit 1
+}
+$ITGManufacturers = ($ITGManufacturers).data
 
 $ITGModels = Get-ITGlueModels -page_size "1000"
 $i = 1
 while ($ITGModels.links.next) {
 	$i++
 	$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+	if (!$Models_Next -or $Models_Next.Error) {
+		# We got an error querying models, wait and try again
+		Start-Sleep -Seconds 2
+		$Models_Next = Get-ITGlueModels -page_size "1000" -page_number $i
+
+		if (!$Models_Next -or $Models_Next.Error) {
+			Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing models from ITG. Exiting..."
+			Write-PSFMessage -Level Error -Message $Models_Next.Error
+			exit 1
+		}
+	}
 	$ITGModels.data += $Models_Next.data
 	$ITGModels.links = $Models_Next.links
 	Start-Sleep -Seconds 1
@@ -61,13 +78,29 @@ $ITG_OrgDevices = Get-ITGlueConfigurations -page_size "1000" -filter_archived $t
 $i = 1
 while ($ITG_OrgDevices.links.next) {
 	$i++
-	$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i
+	$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_archived $true
+	if (!$Devices_Next -or $Devices_Next.Error) {
+		# We got an error querying configurations, wait and try again
+		Start-Sleep -Seconds 2
+		$Devices_Next = Get-ITGlueConfigurations -page_size "1000" -page_number $i -filter_archived $true
+
+		if (!$Devices_Next -or $Devices_Next.Error) {
+			Write-PSFMessage -Level Error -Message "An error occurred trying to get the existing configurations from ITG. Exiting..."
+			Write-PSFMessage -Level Error -Message $Devices_Next.Error
+			exit 1
+		}
+	}
 	$ITG_OrgDevices.data += $Devices_Next.data
 	$ITG_OrgDevices.links = $Devices_Next.links
 	Start-Sleep -Seconds 1
 }
 $ITG_OrgDevices = $ITG_OrgDevices.data
 Write-PSFMessage -Level Verbose -Message "Grabbed $($ITGManufacturers.count) manufacturers, $($ITGModels.count) models, and $($ITG_OrgDevices.count) configurations from ITG."
+
+if (!$ITGModels -or !$ITGManufacturers -or !$ITG_OrgDevices) {
+	Write-PSFMessage -Level Error -Message "There were issues getting the Models, Manufacturers, and Configurations from ITG. Exiting..."
+	exit 1
+}
 
 # Find all Manufacturers that need to be cleaned up (move models from old to new) and any that need to be re-added (with a cleaned up name)
 $ManufacturersToFix = @()

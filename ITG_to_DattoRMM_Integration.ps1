@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue May 28 2024
+# Last Modified: Fri Aug 02 2024
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2024-08-02	CJ	Added updating of operating system on ITG devices
 # 2024-04-02	CJ	Fixing constant archival of new SNMP devices
 # 2024-02-16	CJ	Improved duplicate check for new network devices that may not have a SN or Mac address
 # 2024-02-16	CJ	Implemented configuration archiving
@@ -1447,6 +1448,16 @@ if ($FullCheck) {
 				$UpdatedITGDevice."warranty-expires-at" = $RMMDevice.warrantyDate
 				$UpdateRequired = $true
 			}
+			if ($RMMDevice.operatingSystem -and ($RMMDevice.operatingSystem -notlike "*$($ITGDevice.attributes.'operating-system-name'.Trim())*" -or !$ITGDevice.attributes.'operating-system-id')) {
+				$ITGOperatingSystem = Get-ITGOperatingSystem -RMMDevice $RMMDevice
+				if ($ITGOperatingSystem -and $ITGOperatingSystem.id -ne $ITGDevice.attributes.'operating-system-id') {
+					$UpdatedITGDevice."operating-system-id" = $ITGOperatingSystem.id
+					$UpdateRequired = $true
+					if ($RMMDevice.operatingSystem -and (!$ITGOperatingSystem -or $ITGOperatingSystem -like "*(Other)")) {
+						$UpdatedITGDevice."operating-system-notes" = $RMMDevice.operatingSystem
+					}
+				}
+			}
 
 			# If missing/not set, update
 			if ($RMMDevice.serialNumber -and $RMMDevice.serialNumber.Trim() -and !$ITGDevice.attributes."serial-number") {
@@ -1471,16 +1482,6 @@ if ($FullCheck) {
 				if ($ITGModel) {
 					$UpdatedITGDevice."model-id" = $ITGModel.id
 					$UpdateRequired = $true
-				}
-			}
-			if ($RMMDevice.operatingSystem -and $RMMDevice.operatingSystem.Trim() -and !$ITGDevice.attributes.'operating-system-id') {
-				$ITGOperatingSystem = Get-ITGOperatingSystem -RMMDevice $RMMDevice
-				if ($ITGOperatingSystem) {
-					$UpdatedITGDevice."operating-system-id" = $ITGOperatingSystem.id
-					$UpdateRequired = $true
-					if ($RMMDevice.operatingSystem -and (!$ITGOperatingSystem -or $ITGOperatingSystem -like "*(Other)")) {
-						$UpdatedITGDevice."operating-system-notes" = $RMMDevice.operatingSystem
-					}
 				}
 			}
 			if ($RMMDevice.Nics -and !$ITGDevice.attributes.'mac-address') {

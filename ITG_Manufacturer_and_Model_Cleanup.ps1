@@ -4,7 +4,7 @@
 # Created Date: Tuesday, November 15th 2022, 10:13:02 am
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue May 28 2024
+# Last Modified: Thu May 28 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -31,7 +31,8 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 # Setup logging
 If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
 $logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_man_mod_cleanup-$(Get-date -f 'yyyyMMddHHmmss').txt";
-Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+$logRotatePath = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_man_mod_cleanup-*.txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -LogRotatePath $logRotatePath -Enabled $true -Wait;
 Write-PSFMessage -Level Verbose -Message "Starting the ITG Manufacturer and Model cleanup."
 
 # Import/Install any required modules

@@ -4,7 +4,7 @@
 # Created Date: Tuesday, May 16th 2023, 3:59:48 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue May 28 2024
+# Last Modified: Thu May 28 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -45,7 +45,8 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 # Setup logging
 If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
 $logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-rmm_to_itg_monitors-$(Get-date -f 'yyyyMMddHHmmss').txt";
-Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+$logRotatePath = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-rmm_to_itg_monitors-*.txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -LogRotatePath $logRotatePath -Enabled $true -Wait;
 Write-PSFMessage -Level Verbose -Message "Starting the Datto RMM to ITG Monitors Integration."
 
 # Import/Install any required modules

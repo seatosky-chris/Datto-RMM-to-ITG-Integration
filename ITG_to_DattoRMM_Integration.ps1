@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Fri Aug 02 2024
+# Last Modified: Thu May 28 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -39,7 +39,8 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 # Setup logging
 If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
 $logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_to_rmm-$(Get-date -f 'yyyyMMddHHmmss').txt";
-Set-PSFLoggingProvider -Name logfile -FilePath $logFile -Enabled $true;
+$logRotatePath = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_to_rmm-*.txt";
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -LogRotatePath $logRotatePath -Enabled $true -Wait;
 Write-PSFMessage -Level Verbose -Message "Starting device matching script."
 
 Function Test-IfAlreadyRunning {

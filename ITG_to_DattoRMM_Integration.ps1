@@ -1128,6 +1128,28 @@ if ($null -eq $MostRecent){
 		if ($OldDeviceLists) {
 			$OldDeviceLists | ForEach-Object { Remove-Item $_ }
 		}
+
+		$OldDeviceAdditions = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceAdditions*.csv" | Sort-Object -Descending | Select-Object -Skip 20 | 
+			Where-Object { 
+				$_.Name -notlike "*-$(get-date -format yyyy-MM-dd)-*" -and 
+				$_.Name -notlike "*-$(Get-Date (get-date).AddDays(-1) -format yyyy-MM-dd)-*" -and 
+				$_.CreationTime -lt (Get-Date).AddDays(-60)
+			}
+
+		if ($OldDeviceAdditions) {
+			$OldDeviceAdditions | ForEach-Object { Remove-Item $_ }
+		}
+
+		$OldDeviceDeletions = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceDeletions*.csv" | Sort-Object -Descending | Select-Object -Skip 20 | 
+			Where-Object { 
+				$_.Name -notlike "*-$(get-date -format yyyy-MM-dd)-*" -and 
+				$_.Name -notlike "*-$(Get-Date (get-date).AddDays(-1) -format yyyy-MM-dd)-*" -and 
+				$_.CreationTime -lt (Get-Date).AddDays(-60)
+			}
+
+		if ($OldDeviceDeletions) {
+			$OldDeviceDeletions | ForEach-Object { Remove-Item $_ }
+		}
 	} else {
 		$FullCheck = $true
 	}

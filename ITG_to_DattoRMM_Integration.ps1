@@ -72,7 +72,7 @@ Function Test-IfAlreadyRunning {
 		[String]$ScriptName
 	)
 	#Get array of all powershell scripts currently running
-	$PsScriptsRunning = get-wmiobject win32_process | where{$_.processname -eq 'powershell.exe'} | select-object commandline,ProcessId
+	$PsScriptsRunning = Get-CimInstance Win32_Process | Where-Object { $_.ProcessName -eq 'powershell.exe' } | Select-Object CommandLine, ProcessId
 
 	#Get name of current script
 	#$ScriptName = $MyInvocation.MyCommand.Name #NO! This gets name of *THIS FUNCTION*
@@ -381,7 +381,7 @@ function Measure-StringDistance {
             Michael West
     #>
 
-    [CmdletBinding(SupportsShouldProcess=$true)]
+    [CmdletBinding()]
     [OutputType([int])]
     param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
@@ -453,7 +453,7 @@ function Measure-PartsEquality {
             There is one character that is different, "e".
     #>
 
-    [CmdletBinding(SupportsShouldProcess=$true)]
+    [CmdletBinding()]
     [OutputType([int])]
     param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
@@ -492,7 +492,7 @@ function Get-ITGOperatingSystem {
             Windows 10 Pro
     #>
 
-    [CmdletBinding(SupportsShouldProcess=$true)]
+    [CmdletBinding()]
     [OutputType([int])]
     param (
         [Parameter(ValueFromPipelineByPropertyName=$true)]
@@ -648,7 +648,6 @@ function Get-ITGOperatingSystem {
 					$BestScore = $Distance
 					$BestITGOS = $ITGOS
 				}
-				$WriteEquality = $true
 			}
 		}
 

@@ -41,6 +41,15 @@ For project background and manual setup steps, refer to [README.md](./README.md)
 - **Pagination**: IT Glue endpoints return paginated responses. Always handle `links.next` with `page_size 1000` loops and 1–2 second sleep intervals between pages to prevent rate limiting.
 - **Asset Identification**: RMM device UIDs are stored in the ITG `installed-by` field (`"RMM: " + $RMMDevice.uid`) for unambiguous matching.
 - **Fuzzy Matching**: When `installed-by` is empty, fallback matching follows: Exact Name/Hostname -> Description -> Serial Number -> Levenshtein distance (`Measure-StringDistance`).
+- **Centralized Asset Updates (`Update-ITGDevice`)**: Never submit ad-hoc field subsets directly to `Set-ITGlueConfigurations`. Always route configuration updates through `Update-ITGDevice` to guarantee full attribute parity (hostname, primary IP, operating system, OS notes, serial, model, manufacturer, MAC, asset tag, warranty expiry, and unarchival).
+
+### Lifecycle & Deduplication
+- **Pending Audit Queue & Deduplication**: When newly created workstations/servers lack serial number or model data, register them in `DeviceTracking/PendingDeviceAudits.json`. On subsequent runs, once audit data populates:
+  1. Call `Get-RelatedITGDevices` to check for pre-existing matching configurations, excluding the temporary created asset (`$_.id -ne $PendingItem.itg_id`).
+  2. If a pre-existing asset matches, unarchive and update that asset with `Update-ITGDevice`, then delete the temporary duplicate configuration using `Remove-ITGlueConfigurations`.
+  3. If no pre-existing match exists, perform a full update on the created asset via `Update-ITGDevice`.
+- **Queue Scope Boundaries**: `PendingDeviceAudits.json` strictly tracks agent-managed workstations and servers (`Desktop`, `Laptop`, `Workstation`, `Server`, `ESXi Host`). SNMP and network devices (`$RMMDevice.snmpEnabled`) must bypass the pending retry queue and rely on their dedicated SNMP discovery delay controls (`$RMM_Devices_RecentlyAuditedSNMP`).
+- **Function Declaration Order**: In all scripts, declare functions in a strict bottom-up dependency order. Utility and transformation functions (`Get-ITGOperatingSystem`, `Get-ITGManufacturerAndModel`, `Update-ITGDevice`, `Get-PendingDevices`, `Add-PendingDevice`) must precede composite lifecycle functions (`Process-PendingDevices`, `New-ITGDevice`, `Archive-ITGDevice`).
 
 ### Safety & Guardrails
 - **Kill Switches**: Preserve safety checks that prevent bulk additions or deletions (e.g., aborting if adding/deleting > 100 devices in one run) to protect against API failure regressions.

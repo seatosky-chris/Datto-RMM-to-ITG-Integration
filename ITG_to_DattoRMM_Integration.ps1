@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Thu May 28 2026
+# Last Modified: Tue Sep 15 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -1079,7 +1079,7 @@ if ($null -eq $MostRecent){
 			Write-PSFMessage -Level Verbose -Message "Saved deleted devices to DeviceTracking\DattoRMMDeviceDeletions-<date stamp>.csv"
 
 			# Mark devices for archival in ITG
-			if ($DeletedDevices.Count -lt 100) { # For safety, if there is an issue we dont want to delete a bunch of duplicates
+			if ($DeletedDevices.Count -lt 100) { # KILL SWITCH: For safety, if there is an issue we dont want to delete a bunch of duplicates
 				foreach ($DeleteDevice in $DeletedDevices) {
 					if (!$DeviceTypes_PreventDeletion -or $DeleteDevice.deviceType.category -notin $DeviceTypes_PreventDeletion) {
 						[void]$ITGArchiveDevices.Add($DeleteDevice)
@@ -1109,7 +1109,7 @@ if ($null -eq $MostRecent){
 			Write-PSFMessage -Level Verbose -Message "Saved new devices to DeviceTracking\DattoRMMDeviceAdditions-<date stamp>.csv"
 
 			# Add new devices to ITG
-			if ($NewDevices.Count -lt 100) { # For safety, if there is an issue we dont want to add a bunch of duplicates
+			if ($NewDevices.Count -lt 100) { # KILL SWITCH: For safety, if there is an issue we dont want to add a bunch of duplicates
 				foreach ($NewDevice in $NewDevices) {
 					New-ITGDevice -RMMDevice $NewDevice
 				}
@@ -1420,7 +1420,7 @@ if ($FullCheck) {
 		Write-PSFMessage -Level Verbose -Message "New devices found, adding to ITG"
 
 		# Add new devices to ITG
-		if ($NewDevices.Count -lt 100) { # For safety, if there is an issue we dont want to add a bunch of duplicates
+		if ($NewDevices.Count -lt 100) { # KILL SWITCH: For safety, if there is an issue we dont want to add a bunch of duplicates
 			foreach ($NewDevice in $NewDevices) {
 				New-ITGDevice -RMMDevice $NewDevice
 			}

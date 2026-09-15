@@ -1095,13 +1095,56 @@ function Process-PendingDevices {
 		$HasModel = ($CurRMMDevice.model -and [string]::IsNullOrWhiteSpace([string]$CurRMMDevice.model) -eq $false)
 
 		if ($HasSerial -and $HasModel) {
-			# Serial and model are now populated! Update ITG configuration using full Update-ITGDevice
-			$ITGResponse = Get-ITGlueConfigurations -id $PendingItem.itg_id
-			if ($ITGResponse -and $ITGResponse.data) {
-				$ITGDevice = $ITGResponse.data
-				Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $ITGDevice
+			# Serial and model are now populated!
+			# First, check if this device matches a pre-existing ITG configuration (other than the temporary one created on initial run)
+			$RelatedDevices = Get-RelatedITGDevices -RMMDevice $CurRMMDevice
+			$ExistingOtherDevices = @()
+			if ($RelatedDevices -and ($RelatedDevices | Measure-Object).Count -gt 0) {
+				$ExistingOtherDevices = @($RelatedDevices | Where-Object { $_.id -ne $PendingItem.itg_id })
+			}
+
+			if ($ExistingOtherDevices -and $ExistingOtherDevices.Count -gt 0) {
+				# Pre-existing ITG device found! Unarchive & update that existing device, then delete the temporary duplicate
+				$TargetDevice = $ExistingOtherDevices | Sort-Object -Property {$_.attributes."updated-at"} -Descending | Select-Object -First 1
+
+				Write-Host "Found pre-existing ITG device '$($TargetDevice.attributes.name)' (ID: $($TargetDevice.id)) matching pending device '$($PendingItem.hostname)'." -ForegroundColor Green
+				Write-PSFMessage -Level Verbose -Message "Found pre-existing ITG device '$($TargetDevice.attributes.name)' (ID: $($TargetDevice.id)) matching pending device '$($PendingItem.hostname)'."
+
+				# Update and unarchive the existing configuration
+				Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $TargetDevice
+
+				# Delete the temporary duplicate configuration that was created during initial discovery
+				try {
+					Remove-ITGlueConfigurations -id $PendingItem.itg_id
+					Write-Host "Deleted temporary duplicate ITG configuration (ID: $($PendingItem.itg_id)) for '$($PendingItem.hostname)'." -ForegroundColor Green
+					Write-PSFMessage -Level Verbose -Message "Deleted temporary duplicate ITG configuration (ID: $($PendingItem.itg_id)) for '$($PendingItem.hostname)'."
+				} catch {
+					# Fallback to bulk delete data payload if -id parameter isn't supported by this ITGlueAPI version
+					try {
+						$DeleteData = @(@{
+							type = "configurations"
+							attributes = @{
+								id = $PendingItem.itg_id
+							}
+						})
+						Remove-ITGlueConfigurations -data $DeleteData
+						Write-Host "Deleted temporary duplicate ITG configuration (ID: $($PendingItem.itg_id)) for '$($PendingItem.hostname)'." -ForegroundColor Green
+						Write-PSFMessage -Level Verbose -Message "Deleted temporary duplicate ITG configuration (ID: $($PendingItem.itg_id)) for '$($PendingItem.hostname)'."
+					} catch {
+						Write-PSFMessage -Level Error -Message "Failed to delete temporary duplicate ITG configuration $($PendingItem.itg_id): $($_.Exception.Message)"
+					}
+				}
 			} else {
-				Write-PSFMessage -Level Warning -Message "Could not retrieve ITG device $($PendingItem.itg_id) for pending update."
+				# No pre-existing ITG device found; update the configuration created for this device as normal
+				$ITGResponse = Get-ITGlueConfigurations -id $PendingItem.itg_id
+				if ($ITGResponse -and $ITGResponse.data) {
+					$ITGDevice = $ITGResponse.data
+					Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $ITGDevice
+					Write-Host "Updated pending device in ITG: $($PendingItem.hostname) (ITG ID: $($PendingItem.itg_id)) with full update." -ForegroundColor Green
+					Write-PSFMessage -Level Verbose -Message "Updated pending device in ITG: $($PendingItem.hostname) (ITG ID: $($PendingItem.itg_id)) with full update."
+				} else {
+					Write-PSFMessage -Level Warning -Message "Could not retrieve ITG device $($PendingItem.itg_id) for pending update."
+				}
 			}
 
 			# Successfully processed, remove from retry list

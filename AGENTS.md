@@ -46,6 +46,7 @@ For project background and manual setup steps, refer to [README.md](./README.md)
 - **Kill Switches**: Preserve safety checks that prevent bulk additions or deletions (e.g., aborting if adding/deleting > 100 devices in one run) to protect against API failure regressions.
 - **Single Instance**: Scripts enforce single-instance execution via `Test-IfAlreadyRunning` checking running `powershell.exe` command lines.
 - **TLS Protocol**: Enforce TLS 1.2+ (`[Net.ServicePointManager]::SecurityProtocol = [Enum]::ToObject([Net.SecurityProtocolType], 3072)`).
+- **Pending Audit Retries**: New devices sync immediately; devices missing Serial Number or Model are stored in `DeviceTracking/PendingDeviceAudits.json` and retried until populated or until meeting online/offline timeouts.
 
 ---
 

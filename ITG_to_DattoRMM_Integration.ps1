@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2026-09-15	CJ	Sync new devices immediately; track pending audit retries for missing serial/model with online/offline timeout removal
 # 2024-08-02	CJ	Added updating of operating system on ITG devices
 # 2024-04-02	CJ	Fixing constant archival of new SNMP devices
 # 2024-02-16	CJ	Improved duplicate check for new network devices that may not have a SN or Mac address
@@ -857,6 +858,301 @@ function Get-RelatedITGPasswords ($RMMDevice) {
 	return $false
 }
 
+# This function compares an existing IT Glue configuration against current Datto RMM device data and applies any updates
+function Update-ITGDevice {
+	<#
+	.SYNOPSIS
+		Updates an existing IT Glue configuration with current data from Datto RMM if changes or missing fields are detected.
+	.PARAMETER RMMDevice
+		The Datto RMM device object.
+	.PARAMETER ITGDevice
+		The IT Glue configuration object.
+	.PARAMETER StepThroughUpdates
+		Whether to prompt the user to press any key between updates.
+	#>
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory=$true)]
+		$RMMDevice,
+
+		[Parameter(Mandatory=$true)]
+		$ITGDevice,
+
+		[Parameter(Mandatory=$false)]
+		[bool]$StepThroughUpdates = $false
+	)
+
+	if (!$RMMDevice -or !$ITGDevice) {
+		return $false
+	}
+
+	$UpdatedITGDevice = @{}
+	$UpdateRequired = $false
+
+	# If changed, update
+	if ($RMMDevice.hostname -and (!$ITGDevice.attributes.name -or $RMMDevice.hostname.Trim() -ne $ITGDevice.attributes.name.Trim())) {
+		$UpdatedITGDevice.name = $RMMDevice.hostname.Trim()
+		$UpdateRequired = $true
+	}
+	if ($RMMDevice.intIpAddress -and $RMMDevice.intIpAddress -ne $ITGDevice.attributes."primary-ip") {
+		$UpdatedITGDevice."primary-ip" = $RMMDevice.intIpAddress.Trim()
+		$UpdateRequired = $true
+	}
+	if ($RMMDevice.warrantyDate -and $RMMDevice.warrantyDate -ne $ITGDevice.attributes."warranty-expires-at") {
+		$UpdatedITGDevice."warranty-expires-at" = $RMMDevice.warrantyDate
+		$UpdateRequired = $true
+	}
+	if ($RMMDevice.operatingSystem -and ($RMMDevice.operatingSystem -notlike "*$($ITGDevice.attributes.'operating-system-name'.Trim())*" -or !$ITGDevice.attributes.'operating-system-id')) {
+		$ITGOperatingSystem = Get-ITGOperatingSystem -RMMDevice $RMMDevice
+		if ($ITGOperatingSystem -and $ITGOperatingSystem.id -ne $ITGDevice.attributes.'operating-system-id') {
+			$UpdatedITGDevice."operating-system-id" = $ITGOperatingSystem.id
+			$UpdateRequired = $true
+			if ($RMMDevice.operatingSystem -and (!$ITGOperatingSystem -or $ITGOperatingSystem -like "*(Other)")) {
+				$UpdatedITGDevice."operating-system-notes" = $RMMDevice.operatingSystem
+			}
+		}
+	}
+
+	# If missing/not set, update
+	if ($RMMDevice.serialNumber -and $RMMDevice.serialNumber.Trim() -and !$ITGDevice.attributes."serial-number") {
+		$UpdatedITGDevice."serial-number" = $RMMDevice.serialNumber.Trim()
+		$UpdateRequired = $true
+	}
+	
+	$ITGManufacturerAndModel = $false
+	if ($RMMDevice.manufacturer -and $RMMDevice.manufacturer.Trim() -and !$ITGDevice.attributes."manufacturer-id") {
+		$ITGManufacturerAndModel = Get-ITGManufacturerAndModel -RMMDevice $RMMDevice
+		$ITGManufacturer = $ITGManufacturerAndModel.Manufacturer
+		if ($ITGManufacturer) {
+			$UpdatedITGDevice."manufacturer-id" = $ITGManufacturer.id
+			$UpdateRequired = $true
+		}
+	}
+	if ($RMMDevice.model -and $RMMDevice.model.Trim() -and (!$ITGDevice.attributes."model-id" -or $UpdatedITGDevice."manufacturer-id")) {
+		if (!$ITGManufacturerAndModel) {
+			$ITGManufacturerAndModel = Get-ITGManufacturerAndModel -RMMDevice $RMMDevice
+		}
+		$ITGModel = $ITGManufacturerAndModel.Model
+		if ($ITGModel) {
+			$UpdatedITGDevice."model-id" = $ITGModel.id
+			$UpdateRequired = $true
+		}
+	}
+	if ($RMMDevice.Nics -and !$ITGDevice.attributes.'mac-address') {
+		$PrimaryMac = $RMMDevice.Nics | Where-Object { $_.ipv4 -eq $RMMDevice.intIpAddress }
+		if ($PrimaryMac) {
+			$PrimaryMac = $PrimaryMac.macAddress
+		} else {
+			$PrimaryMac = $null
+		}
+		if ($PrimaryMac) {
+			$UpdatedITGDevice."mac-address" = $PrimaryMac.Trim()
+			$UpdateRequired = $true
+		}
+	}
+	if (!$ITGDevice.attributes."asset-tag") {
+		$AssetTag = Get-AssetTag -RMMDevice $RMMDevice
+		if ($AssetTag) {
+			$UpdatedITGDevice."asset-tag" = $AssetTag
+			$UpdateRequired = $true
+		}
+	}
+	# If asset tag is an RMM ID, update the asset tag and set the installed-by to the RMM ID
+	if (
+		$ITGDevice.attributes."asset-tag" -and 
+		(
+			$ITGDevice.attributes."asset-tag" -match "^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$" -or
+			$ITGDevice.attributes."asset-tag" -match "^[0-9a-fA-F]{8}\b-([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
+		)
+	) {
+		if ($ITGDevice.attributes."installed-by" -notlike "RMM: *") {
+			$UpdatedITGDevice."installed-by" = "RMM: " + $Matches[0]
+			$UpdateRequired = $true
+		}
+		$AssetTag = Get-AssetTag -RMMDevice $RMMDevice
+		if ($AssetTag) {
+			$UpdatedITGDevice."asset-tag" = $AssetTag
+			$UpdateRequired = $true
+		}
+	}
+	if ($ITGDevice.attributes.archived) {
+		$UpdatedITGDevice.'archived' = 'false'
+		$UpdateRequired = $true
+	}
+
+	# Update
+	if ($UpdateRequired) {
+		Write-Host "Updating device: $($ITGDevice.attributes.name)" -ForegroundColor Green
+		Write-PSFMessage -Level Verbose -Message "Updating device: $($ITGDevice.attributes.name)"
+		$UpdatedITGDevice
+		if ($StepThroughUpdates) {
+			Write-Host "Press any key to continue..."
+			$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+		}
+
+		$ConfigurationUpdate = @{
+			'type' = 'configurations'
+			'attributes' = $UpdatedITGDevice
+		}
+		Set-ITGlueConfigurations -id $ITGDevice.id -data $ConfigurationUpdate
+		Write-Host "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
+		Write-PSFMessage -Level Verbose -Message "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
+		return $true
+	}
+
+	return $false
+}
+
+$PendingDevicesFile = Join-Path -Path "$PSScriptRoot\DeviceTracking" -ChildPath "PendingDeviceAudits.json"
+
+function Get-PendingDevices {
+	if (Test-Path -Path $PendingDevicesFile) {
+		try {
+			$Content = Get-Content -Path $PendingDevicesFile -Raw
+			if ($Content -and [string]::IsNullOrWhiteSpace($Content) -eq $false) {
+				$List = $Content | ConvertFrom-Json
+				if ($List -isnot [array]) {
+					$List = @($List)
+				}
+				return [System.Collections.ArrayList]@($List)
+			}
+		} catch {
+			Write-PSFMessage -Level Warning -Message "Failed to load pending devices file: $_"
+		}
+	}
+	return [System.Collections.ArrayList]@()
+}
+
+function Save-PendingDevices ($PendingList) {
+	try {
+		$DirPath = Split-Path -Path $PendingDevicesFile -Parent
+		if (!(Test-Path -Path $DirPath)) {
+			New-Item -ItemType Directory -Path $DirPath | Out-Null
+		}
+		if ($PendingList -and ($PendingList | Measure-Object).Count -gt 0) {
+			$PendingList | ConvertTo-Json -Depth 5 | Set-Content -Path $PendingDevicesFile
+		} else {
+			if (Test-Path -Path $PendingDevicesFile) {
+				Remove-Item -Path $PendingDevicesFile -Force
+			}
+		}
+	} catch {
+		Write-PSFMessage -Level Warning -Message "Failed to save pending devices file: $_"
+	}
+}
+
+function Add-PendingDevice ($RMMDevice, $ITG_ID) {
+	if (!$RMMDevice -or !$ITG_ID) { return }
+
+	# Only add workstations and servers to the pending retry list; ignore SNMP and network devices
+	$IsSNMP = ($RMMDevice.snmpEnabled -eq $true -or $RMMDevice.snmpEnabled -eq "True")
+	$IsWorkstationOrServer = (
+		$RMMDevice.deviceType.category -in @("Desktop", "Laptop", "Workstation", "Server", "ESXi Host") -or
+		$RMMDevice.deviceType.type -in @("Desktop", "Laptop", "Workstation", "Server", "ESXi Host")
+	)
+	if ($IsSNMP -or !$IsWorkstationOrServer) {
+		return
+	}
+
+	$PendingList = Get-PendingDevices
+	if ($PendingList.uid -notcontains $RMMDevice.uid) {
+		$NewEntry = [PSCustomObject]@{
+			uid = $RMMDevice.uid
+			hostname = $RMMDevice.hostname
+			siteId = $RMMDevice.siteId
+			itg_id = $ITG_ID
+			creationDate = $RMMDevice.creationDate
+		}
+		[void]$PendingList.Add($NewEntry)
+		Save-PendingDevices -PendingList $PendingList
+		Write-Host "Added device '$($RMMDevice.hostname)' (ITG ID: $ITG_ID) to pending audit list (missing Serial Number or Model)." -ForegroundColor Yellow
+		Write-PSFMessage -Level Verbose -Message "Added device '$($RMMDevice.hostname)' (ITG ID: $ITG_ID) to pending audit list (missing Serial Number or Model)."
+	}
+}
+
+function Process-PendingDevices {
+	$PendingList = Get-PendingDevices
+	if (!$PendingList -or ($PendingList | Measure-Object).Count -eq 0) {
+		return
+	}
+
+	Write-PSFMessage -Level Verbose -Message "Checking $(($PendingList | Measure-Object).Count) pending device(s) for audit updates..."
+	$RemainingPending = [System.Collections.ArrayList]@()
+
+	foreach ($PendingItem in $PendingList) {
+		$CurRMMDevice = $RMM_Devices | Where-Object { $_.uid -eq $PendingItem.uid } | Select-Object -First 1
+
+		if (!$CurRMMDevice) {
+			# Device was removed from RMM, remove from pending list
+			Write-PSFMessage -Level Verbose -Message "Pending device '$($PendingItem.hostname)' (UID: $($PendingItem.uid)) not found in RMM. Removing from pending list."
+			continue
+		}
+
+		# Ensure audit details are retrieved
+		Get-RMMDeviceDetails -Device $CurRMMDevice
+
+		$HasSerial = ($CurRMMDevice.serialNumber -and [string]::IsNullOrWhiteSpace([string]$CurRMMDevice.serialNumber) -eq $false)
+		$HasModel = ($CurRMMDevice.model -and [string]::IsNullOrWhiteSpace([string]$CurRMMDevice.model) -eq $false)
+
+		if ($HasSerial -and $HasModel) {
+			# Serial and model are now populated! Update ITG configuration using full Update-ITGDevice
+			$ITGResponse = Get-ITGlueConfigurations -id $PendingItem.itg_id
+			if ($ITGResponse -and $ITGResponse.data) {
+				$ITGDevice = $ITGResponse.data
+				Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $ITGDevice
+			} else {
+				Write-PSFMessage -Level Warning -Message "Could not retrieve ITG device $($PendingItem.itg_id) for pending update."
+			}
+
+			# Successfully processed, remove from retry list
+			continue
+		}
+
+		# Serial or model is still missing, check online/offline timeout requirements
+		$CreationDate = $null
+		if ($CurRMMDevice.creationDate) {
+			$CreationDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($CurRMMDevice.creationDate))
+		} elseif ($PendingItem.creationDate) {
+			$CreationDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($PendingItem.creationDate))
+		}
+
+		$InRMMOver24Hours = ($CreationDate -and $CreationDate -le (Get-Date).AddHours(-24))
+		$InRMMOver3Days = ($CreationDate -and $CreationDate -le (Get-Date).AddDays(-3))
+
+		$IsOnline = ($CurRMMDevice.online -eq $true -or $CurRMMDevice.online -eq "True")
+		$OnlineOver1Hour = $false
+
+		if ($IsOnline) {
+			if ($CurRMMDevice.lastReboot) {
+				$LastRebootDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($CurRMMDevice.lastReboot))
+				if ($LastRebootDate -le (Get-Date).AddHours(-1)) {
+					$OnlineOver1Hour = $true
+				}
+			} elseif ($CurRMMDevice.lastAuditDate) {
+				$LastAuditDate = Convert-UTCtoLocal(([datetime]'1/1/1970').AddMilliseconds($CurRMMDevice.lastAuditDate))
+				if ($LastAuditDate -le (Get-Date).AddHours(-1)) {
+					$OnlineOver1Hour = $true
+				}
+			} elseif ($CreationDate -and $CreationDate -le (Get-Date).AddHours(-1)) {
+				$OnlineOver1Hour = $true
+			}
+		}
+
+		# If met online/offline requirements, remove so it isn't retried on every run indefinitely
+		if (($IsOnline -and $OnlineOver1Hour -and $InRMMOver24Hours) -or (!$IsOnline -and $InRMMOver3Days)) {
+			$TimeoutReason = if ($IsOnline) { "Online > 1 hr and in RMM > 24 hrs" } else { "Offline and in RMM > 3 days" }
+			Write-Host "Pending device $($PendingItem.hostname) reached retry timeout ($TimeoutReason). Removing from pending list." -ForegroundColor Yellow
+			Write-PSFMessage -Level Verbose -Message "Pending device $($PendingItem.hostname) reached retry timeout ($TimeoutReason). Removing from pending list."
+			continue
+		}
+
+		# Still pending audit and within timeout window
+		[void]$RemainingPending.Add($PendingItem)
+	}
+
+	Save-PendingDevices -PendingList $RemainingPending
+}
+
 # This function will add a device into ITG using an RMM Device for the details
 function New-ITGDevice ($RMMDevice)
 {
@@ -910,13 +1206,7 @@ function New-ITGDevice ($RMMDevice)
 		if ($false -notin $RelatedDevices.attributes.archived) {
 			$RelatedDevice = $RelatedDevices | Sort-Object -Property {$_.attributes."updated-at"} -Descending | Select-Object -First 1
 			if ($RelatedDevice.attributes.archived) {
-				$UpdatedConfig = @{
-					'type' = 'configurations'
-					'attributes' = @{
-						'archived' = 'false'
-					}
-				}
-				Set-ITGlueConfigurations -id $RelatedDevice.id -data $UpdatedConfig
+				Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $RelatedDevice # Unarchives the device and updates it with current RMM data
 			}
 			return;
 		}
@@ -991,6 +1281,13 @@ function New-ITGDevice ($RMMDevice)
 		Write-PSFMessage -Level Verbose -Message "Added new device to ITG: $($NewConfig.attributes.name)"
 
 		if ($NewITGConfig -and $NewITGConfig.data[0].id) {
+			# Check if serial number or model is missing; if so, add to pending audit retry list
+			$HasSerial = ($RMMDevice.serialNumber -and [string]::IsNullOrWhiteSpace([string]$RMMDevice.serialNumber) -eq $false)
+			$HasModel = ($RMMDevice.model -and [string]::IsNullOrWhiteSpace([string]$RMMDevice.model) -eq $false)
+			if (!$HasSerial -or !$HasModel) {
+				Add-PendingDevice -RMMDevice $RMMDevice -ITG_ID $NewITGConfig.data[0].id
+			}
+
 			# Get any related passwords and attach them as related items to the new config
 			$RelatedPasswords = Get-RelatedITGPasswords -RMMDevice $RMMDevice
 
@@ -1040,6 +1337,9 @@ If(!(test-path -PathType container $path))
     New-Item -ItemType Directory -Path $path | Out-Null
 	Write-PSFMessage -Level Verbose -Message "Created device tracking folder: $path"
 }
+
+# Process any pending device audit retries from previous runs
+Process-PendingDevices
 
 $MostRecent = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList*.csv" | Sort-Object -Descending | Select-Object -First 1
 
@@ -1455,119 +1755,7 @@ if ($FullCheck) {
 				continue
 			}
 
-			$UpdatedITGDevice = @{}
-			$UpdateRequired = $false
-
-			# If changed, update
-			if ($RMMDevice.hostname -and (!$ITGDevice.attributes.name -or $RMMDevice.hostname.Trim() -ne $ITGDevice.attributes.name.Trim())) {
-				$UpdatedITGDevice.name = $RMMDevice.hostname.Trim()
-				$UpdateRequired = $true
-			}
-			if ($RMMDevice.intIpAddress -and $RMMDevice.intIpAddress -ne $ITGDevice.attributes."primary-ip") {
-				$UpdatedITGDevice."primary-ip" = $RMMDevice.intIpAddress.Trim()
-				$UpdateRequired = $true
-			}
-			if ($RMMDevice.warrantyDate -and $RMMDevice.warrantyDate -ne $ITGDevice.attributes."warranty-expires-at") {
-				$UpdatedITGDevice."warranty-expires-at" = $RMMDevice.warrantyDate
-				$UpdateRequired = $true
-			}
-			if ($RMMDevice.operatingSystem -and ($RMMDevice.operatingSystem -notlike "*$($ITGDevice.attributes.'operating-system-name'.Trim())*" -or !$ITGDevice.attributes.'operating-system-id')) {
-				$ITGOperatingSystem = Get-ITGOperatingSystem -RMMDevice $RMMDevice
-				if ($ITGOperatingSystem -and $ITGOperatingSystem.id -ne $ITGDevice.attributes.'operating-system-id') {
-					$UpdatedITGDevice."operating-system-id" = $ITGOperatingSystem.id
-					$UpdateRequired = $true
-					if ($RMMDevice.operatingSystem -and (!$ITGOperatingSystem -or $ITGOperatingSystem -like "*(Other)")) {
-						$UpdatedITGDevice."operating-system-notes" = $RMMDevice.operatingSystem
-					}
-				}
-			}
-
-			# If missing/not set, update
-			if ($RMMDevice.serialNumber -and $RMMDevice.serialNumber.Trim() -and !$ITGDevice.attributes."serial-number") {
-				$UpdatedITGDevice."serial-number" = $RMMDevice.serialNumber.Trim()
-				$UpdateRequired = $true
-			}
-			
-			$ITGManufacturerAndModel = $false
-			if ($RMMDevice.manufacturer -and $RMMDevice.manufacturer.Trim() -and !$ITGDevice.attributes."manufacturer-id") {
-				$ITGManufacturerAndModel = Get-ITGManufacturerAndModel -RMMDevice $RMMDevice
-				$ITGManufacturer = $ITGManufacturerAndModel.Manufacturer
-				if ($ITGManufacturer) {
-					$UpdatedITGDevice."manufacturer-id" = $ITGManufacturer.id
-					$UpdateRequired = $true
-				}
-			}
-			if ($RMMDevice.model -and $RMMDevice.model.Trim() -and (!$ITGDevice.attributes."model-id" -or $UpdatedITGDevice."manufacturer-id")) {
-				if (!$ITGManufacturerAndModel) {
-					$ITGManufacturerAndModel = Get-ITGManufacturerAndModel -RMMDevice $RMMDevice
-				}
-				$ITGModel = $ITGManufacturerAndModel.Model
-				if ($ITGModel) {
-					$UpdatedITGDevice."model-id" = $ITGModel.id
-					$UpdateRequired = $true
-				}
-			}
-			if ($RMMDevice.Nics -and !$ITGDevice.attributes.'mac-address') {
-				$PrimaryMac = $RMMDevice.Nics | Where-Object { $_.ipv4 -eq $RMMDevice.intIpAddress }
-				if ($PrimaryMac) {
-					$PrimaryMac = $PrimaryMac.macAddress
-				} else {
-					$PrimaryMac = $null
-				}
-				if ($PrimaryMac) {
-					$UpdatedITGDevice."mac-address" = $PrimaryMac.Trim()
-					$UpdateRequired = $true
-				}
-			}
-			if (!$ITGDevice.attributes."asset-tag") {
-				$AssetTag = Get-AssetTag -RMMDevice $RMMDevice
-				if ($AssetTag) {
-					$UpdatedITGDevice."asset-tag" = $AssetTag
-					$UpdateRequired = $true
-				}
-			}
-			# If asset tag is an RMM ID, update the asset tag and set the installed-by to the RMM ID
-			if (
-				$ITGDevice.attributes."asset-tag" -and 
-				(
-					$ITGDevice.attributes."asset-tag" -match "^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$" -or
-					$ITGDevice.attributes."asset-tag" -match "^[0-9a-fA-F]{8}\b-([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$"
-				)
-			) {
-				if ($ITGDevice.attributes."installed-by" -notlike "RMM: *") {
-					$UpdatedITGDevice."installed-by" = "RMM: " + $Matches[0]
-					$UpdateRequired = $true
-				}
-				$AssetTag = Get-AssetTag -RMMDevice $RMMDevice
-				if ($AssetTag) {
-					$UpdatedITGDevice."asset-tag" = $AssetTag
-					$UpdateRequired = $true
-				}
-			}
-			if ($ITGDevice.attributes.archived) {
-				$UpdatedITGDevice.'archived' = 'false'
-				$UpdateRequired = $true
-			}
-
-			# Update
-			if ($UpdateRequired) {
-
-				Write-Host "Updating device: $($ITGDevice.attributes.name)" -ForegroundColor Green
-				Write-PSFMessage -Level Verbose -Message "Updating device: $($ITGDevice.attributes.name)"
-				$UpdatedITGDevice
-				if ($StepThroughUpdates) {
-					Write-Host "Press any key to continue..."
-					$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
-				}
-
-				$ConfigurationUpdate = @{
-					'type' = 'configurations'
-					'attributes' = $UpdatedITGDevice
-				}
-				Set-ITGlueConfigurations -id $ITGDevice.id -data $ConfigurationUpdate
-				Write-Host "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
-				Write-PSFMessage -Level Verbose -Message "Updated in ITG: $($ITGDevice.attributes.name) using RMM: $($RMMDevice.hostname)"
-			}
+			Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $ITGDevice -StepThroughUpdates $StepThroughUpdates
 		}
 	}
 

@@ -767,6 +767,49 @@ function Get-AssetTag ($RMMDevice) {
 	return $AssetTag
 }
 
+# Gets the ITG Configuration Type ID for an RMM Device
+# Router devices are re-categorized (Firewall/Switch/Wireless AP) based on the hostname as RMM miscategorizes many into this type
+function Get-ITGConfigType ($RMMDevice) {
+	if (!$RMMDevice -or !$RMMDevice.deviceType) {
+		return $false
+	}
+
+	$DeviceType = $RMMDevice.deviceType.type
+	$DeviceCategory = $RMMDevice.deviceType.category
+
+	# If category is Unknown, do not attempt to determine a config type
+	if ($DeviceCategory -eq "Unknown") {
+		return $false
+	}
+
+	if ($DeviceType -eq "Router" -and $RMMDevice.hostname) {
+		if ($RMMDevice.hostname -match '(-FW)|(FW\d?\d)') {
+			$DeviceCategory = "Network Device (Firewall)"
+			$DeviceType = "Firewall"
+		}
+		elseif ($RMMDevice.hostname -match '(-SW)|(SW\d?\d)') {
+			$DeviceCategory = "Network Device (Switch)"
+			$DeviceType = "Switch"
+		}
+		elseif ($RMMDevice.hostname -match '(-AP)|(-WAP)|(AP\d?\d)|(WAP\d?\d)|( WAP$)') {
+			$DeviceCategory = "Network Device (Other)"
+			$DeviceType = "Wireless AP"
+		}
+	}
+
+	# Get config type
+	$ConfigType = $false
+	if ($DeviceType -in $ITG_ConfigTypeIDs.Keys) {
+		$ConfigType = $ITG_ConfigTypeIDs[$DeviceType]
+	} elseif ($DeviceCategory -in $ITG_ConfigTypeIDs.Keys) {
+		$ConfigType = $ITG_ConfigTypeIDs[$DeviceCategory]
+	} elseif ("Other" -in $ITG_ConfigTypeIDs.Keys) {
+		$ConfigType = $ITG_ConfigTypeIDs["Other"]
+	}
+
+	return $ConfigType
+}
+
 # Gets any related ITG devices by searching the organization for devices with the same name
 # It then compares mac address, serial #, etc.
 function Get-RelatedITGDevices ($RMMDevice) {
@@ -976,6 +1019,27 @@ function Update-ITGDevice {
 	}
 	if ($ITGDevice.attributes.archived) {
 		$UpdatedITGDevice.'archived' = 'false'
+		if ($ITG_ConfigStatusID -and $ITG_ConfigStatusID -ne $ITGDevice.attributes.'configuration-status-id') {
+			$UpdatedITGDevice.'configuration-status-id' = $ITG_ConfigStatusID
+		}
+		$UpdateRequired = $true
+	}
+
+	# If the device appears to have changed type in RMM, update the ITG configuration type if possible
+	# Only update for RMM devices that are workstations/laptops/servers (RMM may misreport network devices, so leave those as-is).
+	# If the ITG type is not set at all, update on any device type.
+	# If the RMM device type resolves to no config type (e.g. unknown/other), don't change the ITG type.
+	$ITGConfigType = $false
+	$ITGDeviceType = $ITGDevice.attributes.'configuration-type-name'
+	$IsRMMWorkstationOrServer = (
+		$RMMDevice.deviceType.category -in @("Desktop", "Laptop", "Server", "ESXi Host") -or
+		$RMMDevice.deviceType.type -in @("Desktop", "iMac", "Mac Mini", "Docking Station", "Laptop", "MacBook Air", "MacBook Pro", "Notebook", "Portable", "Main System Chassis", "Server", "Tower", "ESXi Host")
+	)
+	if ($RMMDevice.deviceType -and ($IsRMMWorkstationOrServer -or $ITGDeviceType -in @($null, ""))) {
+		$ITGConfigType = Get-ITGConfigType -RMMDevice $RMMDevice
+	}
+	if ($ITGConfigType -and $ITGConfigType -ne $ITGDevice.attributes."configuration-type-id") {
+		$UpdatedITGDevice."configuration-type-id" = $ITGConfigType
 		$UpdateRequired = $true
 	}
 
@@ -1046,8 +1110,8 @@ function Add-PendingDevice ($RMMDevice, $ITG_ID) {
 	# Only add workstations and servers to the pending retry list; ignore SNMP and network devices
 	$IsSNMP = ($RMMDevice.snmpEnabled -eq $true -or $RMMDevice.snmpEnabled -eq "True")
 	$IsWorkstationOrServer = (
-		$RMMDevice.deviceType.category -in @("Desktop", "Laptop", "Workstation", "Server", "ESXi Host") -or
-		$RMMDevice.deviceType.type -in @("Desktop", "Laptop", "Workstation", "Server", "ESXi Host")
+		$RMMDevice.deviceType.category -in @("Desktop", "Laptop", "Server", "ESXi Host") -or
+		$RMMDevice.deviceType.type -in @("Desktop", "iMac", "Mac Mini", "Docking Station", "Laptop", "MacBook Air", "MacBook Pro", "Notebook", "Portable", "Main System Chassis", "Server", "Tower", "ESXi Host")
 	)
 	if ($IsSNMP -or !$IsWorkstationOrServer) {
 		return
@@ -1208,32 +1272,8 @@ function New-ITGDevice ($RMMDevice)
 		 return;
 	}
 
-	$ConfigType = $false;
-
-	# If the RMM device type is Router, do some extra categorization based on the device name (as RMM miscategorizes alot into this type)
-	if ($RMMDevice.deviceType.type -eq "Router") {
-		if ($RMMDevice.hostname -match '(-FW)|(FW\d?\d)') {
-			$RMMDevice.deviceType.category = "Network Device (Firewall)"
-			$RMMDevice.deviceType.type = "Firewall"
-		}
-		elseif ($RMMDevice.hostname -match '(-SW)|(SW\d?\d)') {
-			$RMMDevice.deviceType.category = "Network Device (Switch)"
-			$RMMDevice.deviceType.type = "Switch"
-		}
-		elseif ($RMMDevice.hostname -match '(-AP)|(-WAP)|(AP\d?\d)|(WAP\d?\d)|( WAP$)') {
-			$RMMDevice.deviceType.category = "Network Device (Other)"
-			$RMMDevice.deviceType.type = "Wireless AP"
-		}
-	}
-
-	# Get config type	
-	if ($RMMDevice.deviceType.type -in $ITG_ConfigTypeIDs.Keys) {
-		$ConfigType = $ITG_ConfigTypeIDs[$RMMDevice.deviceType.type]
-	} elseif ($RMMDevice.deviceType.category -in $ITG_ConfigTypeIDs.Keys) {
-		$ConfigType = $ITG_ConfigTypeIDs[$RMMDevice.deviceType.category]
-	} elseif ("Other" -in $ITG_ConfigTypeIDs.Keys) {
-		$ConfigType = $ITG_ConfigTypeIDs["Other"]
-	}
+	# Get config type (Router devices are re-categorized based on hostname as RMM miscategorizes many into this type)
+	$ConfigType = Get-ITGConfigType -RMMDevice $RMMDevice
 
 	if (!$ConfigType) {
 		return;

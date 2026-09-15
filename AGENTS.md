@@ -48,7 +48,7 @@ For project background and manual setup steps, refer to [README.md](./README.md)
   1. Call `Get-RelatedITGDevices` to check for pre-existing matching configurations, excluding the temporary created asset (`$_.id -ne $PendingItem.itg_id`).
   2. If a pre-existing asset matches, unarchive and update that asset with `Update-ITGDevice`, then delete the temporary duplicate configuration using `Remove-ITGlueConfigurations`.
   3. If no pre-existing match exists, perform a full update on the created asset via `Update-ITGDevice`.
-- **Queue Scope Boundaries**: `PendingDeviceAudits.json` strictly tracks agent-managed workstations and servers (`Desktop`, `Laptop`, `Workstation`, `Server`, `ESXi Host`). SNMP and network devices (`$RMMDevice.snmpEnabled`) must bypass the pending retry queue and rely on their dedicated SNMP discovery delay controls (`$RMM_Devices_RecentlyAuditedSNMP`).
+- **Queue Scope Boundaries**: `PendingDeviceAudits.json` strictly tracks agent-managed workstations and servers (`Desktop`, `Laptop`, `Server`, `ESXi Host`). SNMP and network devices (`$RMMDevice.snmpEnabled`) must bypass the pending retry queue and rely on their dedicated SNMP discovery delay controls (`$RMM_Devices_RecentlyAuditedSNMP`).
 - **Function Declaration Order**: In all scripts, declare functions in a strict bottom-up dependency order. Utility and transformation functions (`Get-ITGOperatingSystem`, `Get-ITGManufacturerAndModel`, `Update-ITGDevice`, `Get-PendingDevices`, `Add-PendingDevice`) must precede composite lifecycle functions (`Process-PendingDevices`, `New-ITGDevice`, `Archive-ITGDevice`).
 
 ### Safety & Guardrails

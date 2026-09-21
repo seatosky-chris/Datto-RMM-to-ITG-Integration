@@ -4,7 +4,7 @@
 # Created Date: Monday, November 7th 2022, 4:13:43 pm
 # Author: Chris Jantzen
 # -----
-# Last Modified: Tue Sep 15 2026
+# Last Modified: Mon Sep 21 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2026-09-21	CJ	Implemented custom fix for UBNT models with a Broadcom manufacturer (instead use Ubiquiti)
 # 2026-09-15	CJ	Sync new devices immediately; track pending audit retries for missing serial/model with online/offline timeout removal
 # 2024-08-02	CJ	Added updating of operating system on ITG devices
 # 2024-04-02	CJ	Fixing constant archival of new SNMP devices
@@ -307,12 +308,12 @@ Write-PSFMessage -Level Verbose -Message "Grabbed $($RMM_Devices.count) RMM Devi
 # The below function will add more details to the RMM device (serial number, manufacturer, model, etc)
 function Get-RMMDeviceDetails ($Device)
 {
-	if ($Device -and "serialNumber" -notin $Device.PSObject.Properties.Name -and $Device.deviceClass -in @("device", "esxihost", "printer")) {
-		$Device | Add-Member -NotePropertyName serialNumber -NotePropertyValue $false
-		$Device | Add-Member -NotePropertyName manufacturer -NotePropertyValue $false
-		$Device | Add-Member -NotePropertyName model -NotePropertyValue $false
-		$Device | Add-Member -NotePropertyName Nics -NotePropertyValue @()
-		$Device | Add-Member -NotePropertyName url -NotePropertyValue $false
+	if ($Device -and $Device.deviceClass -in @("device", "esxihost", "printer")) {
+		$Device | Add-Member -NotePropertyName serialNumber -NotePropertyValue $false -Force
+		$Device | Add-Member -NotePropertyName manufacturer -NotePropertyValue $false -Force
+		$Device | Add-Member -NotePropertyName model -NotePropertyValue $false -Force
+		$Device | Add-Member -NotePropertyName Nics -NotePropertyValue @() -Force
+		$Device | Add-Member -NotePropertyName url -NotePropertyValue $false -Force
 
 		if ($Device.deviceClass -eq "device") {
 			$AuditDevice = Get-DrmmAuditDevice $Device.uid
@@ -685,6 +686,11 @@ function Get-ITGManufacturerAndModel ($RMMDevice) {
 	$Manufacturer = $RMMDevice.manufacturer
 	$Model = $RMMDevice.model.Trim()
 
+	# Fix for Ubiquiti devices that have the manufacturer listed as Broadcom Limited
+	if ($Manufacturer -like "Broadcom*" -and $Model -like "UBNT-*") {
+		$Manufacturer = "Ubiquiti"
+	}
+
 	if ($Manufacturer) {
 		$Manufacturer = Format-ManufacturerName -Manufacturer $Manufacturer
 		$ITGManufacturer = $false
@@ -944,7 +950,7 @@ function Update-ITGDevice {
 		$UpdatedITGDevice."warranty-expires-at" = $RMMDevice.warrantyDate
 		$UpdateRequired = $true
 	}
-	if ($RMMDevice.operatingSystem -and ($RMMDevice.operatingSystem -notlike "*$($ITGDevice.attributes.'operating-system-name'.Trim())*" -or !$ITGDevice.attributes.'operating-system-id')) {
+	if ($RMMDevice.operatingSystem -and (!$ITGDevice.attributes.'operating-system-id' -or $RMMDevice.operatingSystem -notlike "*$($ITGDevice.attributes.'operating-system-name'.Trim())*")) {
 		$ITGOperatingSystem = Get-ITGOperatingSystem -RMMDevice $RMMDevice
 		if ($ITGOperatingSystem -and $ITGOperatingSystem.id -ne $ITGDevice.attributes.'operating-system-id') {
 			$UpdatedITGDevice."operating-system-id" = $ITGOperatingSystem.id
@@ -1047,7 +1053,6 @@ function Update-ITGDevice {
 	if ($UpdateRequired) {
 		Write-Host "Updating device: $($ITGDevice.attributes.name)" -ForegroundColor Green
 		Write-PSFMessage -Level Verbose -Message "Updating device: $($ITGDevice.attributes.name)"
-		$UpdatedITGDevice
 		if ($StepThroughUpdates) {
 			Write-Host "Press any key to continue..."
 			$Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
@@ -1174,7 +1179,7 @@ function Process-PendingDevices {
 				Write-PSFMessage -Level Verbose -Message "Found pre-existing ITG device '$($TargetDevice.attributes.name)' (ID: $($TargetDevice.id)) matching pending device '$($PendingItem.hostname)'."
 
 				# Update and unarchive the existing configuration
-				Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $TargetDevice
+				Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $TargetDevice | Out-Null
 
 				# Delete the temporary duplicate configuration that was created during initial discovery
 				try {
@@ -1202,7 +1207,7 @@ function Process-PendingDevices {
 				$ITGResponse = Get-ITGlueConfigurations -id $PendingItem.itg_id
 				if ($ITGResponse -and $ITGResponse.data) {
 					$ITGDevice = $ITGResponse.data
-					Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $ITGDevice
+					Update-ITGDevice -RMMDevice $CurRMMDevice -ITGDevice $ITGDevice | Out-Null
 					Write-Host "Updated pending device in ITG: $($PendingItem.hostname) (ITG ID: $($PendingItem.itg_id)) with full update." -ForegroundColor Green
 					Write-PSFMessage -Level Verbose -Message "Updated pending device in ITG: $($PendingItem.hostname) (ITG ID: $($PendingItem.itg_id)) with full update."
 				} else {
@@ -1288,7 +1293,7 @@ function New-ITGDevice ($RMMDevice)
 		if ($false -notin $RelatedDevices.attributes.archived) {
 			$RelatedDevice = $RelatedDevices | Sort-Object -Property {$_.attributes."updated-at"} -Descending | Select-Object -First 1
 			if ($RelatedDevice.attributes.archived) {
-				Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $RelatedDevice # Unarchives the device and updates it with current RMM data
+				Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $RelatedDevice | Out-Null # Unarchives the device and updates it with current RMM data
 			}
 			return;
 		}
@@ -1343,7 +1348,7 @@ function New-ITGDevice ($RMMDevice)
 	}
 
 	foreach ($Nic in $RMMDevice.Nics) {
-		if ($Nic.ipv4 -and $Nic.macAddress) {
+		if ($Nic.ipv4 -and $Nic.macAddress -and $Nic.ipv4 -notin $NewConfig['relationships']['configuration_interfaces']['data'].attributes.'ip-address') {
 			$NewConfig['relationships']['configuration_interfaces']['data'] += @{
 				type = "configuration_interfaces"
 				attributes = @{
@@ -1425,7 +1430,7 @@ Process-PendingDevices
 
 $MostRecent = Get-ChildItem "$PSScriptRoot\DeviceTracking\DattoRMMDeviceList*.csv" | Sort-Object -Descending | Select-Object -First 1
 
-if ($null -eq $MostRecent){
+if ($null -eq $MostRecent) {
     # If we don't have a list of machines create a baseline and exit.
     Write-Host "No existing device list found. Saving current list to create baseline."
 	Write-PSFMessage -Level Verbose -Message "No existing device list found. Saving current list to create baseline."
@@ -1493,7 +1498,7 @@ if ($null -eq $MostRecent){
 			# Add new devices to ITG
 			if ($NewDevices.Count -lt 100) { # KILL SWITCH: For safety, if there is an issue we dont want to add a bunch of duplicates
 				foreach ($NewDevice in $NewDevices) {
-					New-ITGDevice -RMMDevice $NewDevice
+					New-ITGDevice -RMMDevice $NewDevice | Out-Null
 				}
 			} else {
 				Write-PSFMessage -Level Warning -Message "Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv"
@@ -1653,7 +1658,7 @@ if ($FullCheck) {
 		$RMMDeviceCount = ($RMM_OrgDevices | Measure-Object).Count
 		Write-PSFMessage -Level Verbose -Message "Auditing - RMM Site: $($RMMSite.name), ITG Site: $($ITGSite.attributes.name), Device Count: $RMMDeviceCount"
 		if ($RMMDeviceCount -lt 1) {
-			continue
+			return
 		}
 
 		# Add RMM device details for matching
@@ -1688,7 +1693,7 @@ if ($FullCheck) {
 		}
 		Write-PSFMessage -Level Verbose -Message "Found $(($ITG_OrgDevices.data | Measure-Object).Count) ITG devices. (Total Count: $($ITG_OrgDevices.meta.'total-count'))"
 		if (($ITG_OrgDevices.data | Measure-Object).Count -lt 1 -and $ITG_OrgDevices.meta.'total-count' -lt 1) {
-			continue
+			return
 		}
 		$ITG_OrgDevices = $ITG_OrgDevices.data
 		$ITG_Devices[$ITGSite.id] = $ITG_OrgDevices
@@ -1804,7 +1809,7 @@ if ($FullCheck) {
 		# Add new devices to ITG
 		if ($NewDevices.Count -lt 100) { # KILL SWITCH: For safety, if there is an issue we dont want to add a bunch of duplicates
 			foreach ($NewDevice in $NewDevices) {
-				New-ITGDevice -RMMDevice $NewDevice
+				New-ITGDevice -RMMDevice $NewDevice | Out-Null
 			}
 		} else {
 			Write-PSFMessage -Level Warning -Message "Did not add new devices because >100 were found to add. See DattoRMMDeviceAdditions-$(get-date -format yyyy-MM-dd-HHmm).csv"
@@ -1819,13 +1824,13 @@ if ($FullCheck) {
 		Write-PSFMessage -Level Verbose -Message "Checking for Updates - RMM Site: $($RMMSite.name)"
 
 		if (!$RMMSite -or !$ITGSite) {
-			Write-PSFMessage -Level Error -Message "Could not find RMM site or ITG site. Skipping..."
-			continue
+			Write-PSFMessage -Level Error -Message "Could not find RMM site or ITG site for '$($RMMSite.name)'. Skipping..."
+			return
 		}
 
 		if (!$MatchedDevices[$RMMSite.id] -or !$ITG_Devices[$ITGSite.id]) {
-			Write-PSFMessage -Level Error -Message "Found no matched devices or no ITG devices. Skipping..."
-			continue
+			Write-PSFMessage -Level Error -Message "Found no matched devices or no ITG devices for '$($RMMSite.name)'. Skipping..."
+			return
 		}
 		Write-PSFMessage -Level Verbose -Message "Found $($MatchedDevices[$RMMSite.id].count) Matched Devices"
 
@@ -1837,7 +1842,7 @@ if ($FullCheck) {
 				continue
 			}
 
-			Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $ITGDevice -StepThroughUpdates $StepThroughUpdates
+			Update-ITGDevice -RMMDevice $RMMDevice -ITGDevice $ITGDevice -StepThroughUpdates $StepThroughUpdates | Out-Null
 		}
 	}
 

@@ -4,7 +4,7 @@
 # Created Date: Tuesday, November 15th 2022, 10:13:02 am
 # Author: Chris Jantzen
 # -----
-# Last Modified: Thu May 28 2026
+# Last Modified: Mon Sep 21 2026
 # Modified By: Chris Jantzen
 # -----
 # Copyright (c) 2023 Sea to Sky Network Solutions
@@ -14,6 +14,7 @@
 # HISTORY:
 # Date      	By	Comments
 # ----------	---	----------------------------------------------------------
+# 2026-09-21	CJ	Implemented custom fix for UBNT models assigned to Broadcom (move to Ubiquiti)
 # 2023-10-31	CJ	Implemented logging
 ###
 
@@ -32,7 +33,7 @@ if ($CurrentTLS -notlike "*Tls12" -and $CurrentTLS -notlike "*Tls13") {
 If (Get-Module -ListAvailable -Name "PSFramework") {Import-module PSFramework} Else { install-module PSFramework -Force; import-module PSFramework}
 $logFile = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_man_mod_cleanup-$(Get-date -f 'yyyyMMddHHmmss').txt";
 $logRotatePath = Join-Path -path "$PSScriptRoot\Logs" -ChildPath "log-itg_man_mod_cleanup-*.txt";
-Set-PSFLoggingProvider -Name logfile -FilePath $logFile -LogRotatePath $logRotatePath -Enabled $true -Wait;
+Set-PSFLoggingProvider -Name logfile -FilePath $logFile -LogRotatePath $logRotatePath -Enabled $true;
 Write-PSFMessage -Level Verbose -Message "Starting the ITG Manufacturer and Model cleanup."
 
 # Import/Install any required modules
@@ -150,6 +151,45 @@ foreach ($Manufacturer in ($ManufacturersToAdd.New | Sort-Object -Unique)) {
 if (($ManufacturersToAdd | Measure-Object).Count -gt 0) {
 	# If we added manufacturers, refresh the manufacturers list
 	$ITGManufacturers = (Get-ITGlueManufacturers -page_size 1000).data
+}
+
+# Move UBNT models currently assigned to Broadcom to Ubiquiti
+$UbiquitiManufacturer = $ITGManufacturers | Where-Object { $_.attributes.name -like "Ubiquiti" } | Select-Object -First 1
+$BroadcomManufacturers = $ITGManufacturers | Where-Object { $_.attributes.name -like "Broadcom*" }
+
+if ($UbiquitiManufacturer -and $BroadcomManufacturers) {
+	$BroadcomManufacturerIDs = $BroadcomManufacturers.id
+	$UBNTModelsToMove = $ITGModels | Where-Object {
+		$_.attributes.name -like "UBNT-*" -and $_.attributes."manufacturer-id" -in $BroadcomManufacturerIDs
+	}
+
+	foreach ($UBNTModel in $UBNTModelsToMove) {
+		Set-ITGlueModels -id $UBNTModel.id -data @{
+			type = "models"
+			attributes = @{
+				name = $UBNTModel.attributes.name.Trim()
+				"manufacturer-id" = $UbiquitiManufacturer.id
+			}
+		} | Out-Null
+		Start-Sleep -Milliseconds 500
+
+		$DevicesUsingUBNTModel = $ITG_OrgDevices | Where-Object { $_.attributes."model-id" -eq $UBNTModel.id }
+		foreach ($Device in $DevicesUsingUBNTModel) {
+			$ConfigurationUpdate = @{
+				'type' = 'configurations'
+				'attributes' = @{
+					'manufacturer-id' = $UbiquitiManufacturer.id
+					'model-id' = $UBNTModel.id
+				}
+			}
+			Set-ITGlueConfigurations -id $Device.id -data $ConfigurationUpdate | Out-Null
+			Start-Sleep -Milliseconds 500
+		}
+
+		Write-PSFMessage -Level Verbose -Message "Moved UBNT model '$($UBNTModel.attributes.name)' and $($DevicesUsingUBNTModel.count) configurations from Broadcom to Ubiquiti."
+	}
+} elseif (!$UbiquitiManufacturer) {
+	Write-PSFMessage -Level Warning -Message "Could not find the Ubiquiti manufacturer. UBNT models assigned to Broadcom were not moved."
 }
 
 # Loop through each Manufacturer to fix and move all Models from the old to the new manufacturer
